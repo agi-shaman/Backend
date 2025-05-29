@@ -1,6 +1,7 @@
 llama-index
 llama-index-llms-gemini
 python-dotenv
+<<<<<<< HEAD
 google-generativeai 
 
 
@@ -21,3 +22,9 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.lib import colors
+=======
+llama-index-embeddings-gemini
+google-generativeai
+pypdf
+dotenv
+>>>>>>> 4f74ade5f4c0879c8ed8791949b82f047c5b1bbb
