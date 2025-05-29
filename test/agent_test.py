@@ -1,18 +1,26 @@
+from pathlib import Path
 from ..lib import agent
 import asyncio
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
-    main_agent = agent.Agent()  # Or however your Agent class is initialized
-    # Assuming main_agent.agent.run is an async method
-    response = await main_agent.agent.run(user_msg="test")
-    print(str(response))
+    test_pdf_path = Path("test_document.pdf")
+
+    my_agent = agent.Agent(
+        system_prompt=
+            "You are a helpful assistant with advanced capabilities, including managing sub-agents "
+            "and processing PDF documents. You can load PDFs, list them, and query their content. "
+            "When asked about a PDF, first ensure it's loaded using its file path and a chosen ID. "
+            "Then, use that ID to query the PDF."
+        ,verbose=True)
+    
+    # Test 1: List currently (empty) loaded PDFs
+    response = await my_agent.run("List all loaded PDF documents.")
+    print(f"Test 1 Response: {response}") # Expected: No PDFs loaded.
 
 if __name__ == "__main__":
-    # asyncio.run() is the standard way to call an async function
-    # from synchronous code. It takes care of managing the event loop.
     try:
-        asyncio.run(run_agent())
+       asyncio.run(run_agent())
     except ImportError as e:
         print(f"ImportError: {e}")
         print("This script seems to be part of a package. "

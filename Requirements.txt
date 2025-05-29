@@ -5,5 +5,5 @@ llama-index-embeddings-gemini
 google-generativeai
 pypdf
 dotenv
-pip install pymupdf
+pymupdf
 llama-index-readers-file
