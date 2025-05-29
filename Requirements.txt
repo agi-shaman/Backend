@@ -4,3 +4,4 @@ python-dotenv
 llama-index-embeddings-gemini
 google-generativeai
 pypdf
+dotenv
