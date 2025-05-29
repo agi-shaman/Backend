@@ -1,3 +1,5 @@
+import time
+
 from llama_index.core.agent.workflow import FunctionAgent
 import shutil
 from llama_index.core.node_parser import SentenceSplitter
@@ -210,6 +212,55 @@ class Agent:
             description="Lists the unique IDs of all PDF documents that are currently active in memory and available for querying."
         )
         self.tools.append(list_pdfs_tool)
+
+        # --- NEW WAIT TOOL ---
+        def _wait_seconds_tool_func(seconds: int) -> str:
+            """
+            Pauses the agent's execution for a specified number of seconds.
+            Args:
+                seconds (int): The number of seconds to wait. Must be a positive integer.
+            Returns:
+                str: A confirmation message.
+            """
+            if self.verbose:
+                print(f"--- [{self.name}] Tool 'wait_seconds' called, waiting for {seconds} seconds. ---")
+
+            try:
+                s = int(seconds)
+                if s <= 0:
+                    return "Error: Wait duration must be a positive number of seconds."
+                if s > 300:  # Optional: Set a reasonable upper limit for safety
+                    print(
+                        f"--- [{self.name}] Warning: Wait duration {s} is very long. Capping at 300 seconds for safety. ---")
+                    s = 300
+
+                time.sleep(s)
+                msg = f"Successfully waited for {s} seconds."
+                if self.verbose:
+                    print(f"--- [{self.name}] {msg} ---")
+                return msg
+            except ValueError:
+                return "Error: Invalid input for seconds. Please provide an integer."
+            except Exception as e:
+                error_msg = f"Error during wait: {str(e)}"
+                if self.verbose:
+                    print(f"--- [{self.name}] {error_msg} ---")
+                return error_msg
+
+        wait_seconds_tool = FunctionTool.from_defaults(
+            fn=_wait_seconds_tool_func,
+            name="wait_seconds",
+            description=(
+                "Pauses the agent's execution for a specified number of seconds. "
+                "Use this tool if you need to introduce a delay, for example, to wait for an external process to complete, "
+                "to respect a rate limit not handled by other means, or to implement a cooldown period. "
+                "Required argument: 'seconds' (integer, the duration to wait in seconds, e.g., 5 for five seconds). "
+                "Keep the wait time reasonable (e.g., 1 to 60 seconds typically, max 300)."
+            )
+        )
+        self.tools.append(wait_seconds_tool)
+
+        # --- END OF NEW WAIT TOOL ---
 
         def _create_document_tool_func(document_description: str, requested_filename: str) -> str:
             if self.verbose: print(f"--- [{self.name}] Tool 'create_document_from_description' called with description: '{document_description[:70]}...' ---")
