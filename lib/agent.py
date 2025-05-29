@@ -5,7 +5,7 @@ import shutil
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.readers.web import SimpleWebPageReader
-
+import datetime
 from .QueryTypes import QueryTypes
 from .rate_limited_gemini import RateLimitedGemini
 from .FileDecoder import get_file_content
@@ -193,6 +193,35 @@ class Agent:
             )
         )
         self.tools.append(call_sub_agent_tool)
+
+        def _get_current_datetime_with_timezone_func() -> str:
+            """
+            Retrieves the current local date and time, including the timezone name and UTC offset.
+            """
+            if self.verbose: print(f"--- [{self.name}] Tool 'get_current_datetime_with_timezone' called ---")
+            
+            now_local = datetime.datetime.now().astimezone()
+            # Format: YYYY-MM-DD HH:MM:SS TIMEZONE_NAME (UTC_OFFSET)
+            # Example: 2023-10-27 15:30:45 PDT (-0700)
+            # Or using ISO 8601 format which is more standard:
+            # formatted_dt = now_local.isoformat()
+            # Example: 2023-10-27T15:30:45.123456-07:00
+
+            # Let's use a clear, human-readable format that includes the timezone name
+            formatted_dt = now_local.strftime("%Y-%m-%d %H:%M:%S %Z (%z)")
+            
+            return f"The current date and time is: {formatted_dt}"
+
+        current_datetime_tool = FunctionTool.from_defaults(
+            fn=_get_current_datetime_with_timezone_func,
+            name="get_current_datetime_with_timezone",
+            description=(
+                "Provides the current system date and time, including the local timezone name and UTC offset. "
+                "Use this when you need to know the exact current moment for logging, timestamping, "
+                "or responding to time-sensitive queries."
+            )
+        )
+        self.tools.append(current_datetime_tool)
 
         # --- URL Functionality Tools ---
         def _load_url_document_tool_func(url: str, url_id: str) -> str:
