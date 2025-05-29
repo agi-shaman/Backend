@@ -271,13 +271,14 @@ def create_styled_pdf_from_markdown(output_filepath: str, markdown_content: str,
 
     try:
         doc.build(story)
+        print(f"PDF successfully created at: {os.path.abspath(output_filepath)}")
         msg = f"Successfully created PDF: {output_filepath}"
         if verbose: print(msg)
-        return True, msg
+        return True, msg, os.path.abspath(output_filepath)
     except Exception as e:
         err_msg = f"ERROR creating PDF '{output_filepath}': {e}"
         if verbose:
             print(err_msg)
             import traceback
             traceback.print_exc()
-        return False, err_msg
+        return False, err_msg, output_filepath
