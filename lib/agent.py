@@ -3,6 +3,7 @@ import shutil
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.llms.gemini import Gemini
+from .rate_limited_gemini import RateLimitedGemini
 from dotenv import load_dotenv
 import os
 from llama_index.core.tools import FunctionTool
@@ -32,21 +33,21 @@ except ImportError:
 load_dotenv()
 GeminiKey = os.getenv("GeminiKey")
 
-AGENT_WORKER_LLM_MODEL = "gemini-2.5-flash-preview-04-17"
+AGENT_WORKER_LLM_MODEL = "gemini-2.5-flash-preview-05-20"
 
-llm = Gemini(
+llm = RateLimitedGemini(
     model=AGENT_WORKER_LLM_MODEL,
     api_key=GeminiKey,
 )
 
-PDF_CONTEXT_LLM_MODEL = "models/gemini-2.0-flash"
+PDF_CONTEXT_LLM_MODEL = "gemini-2.5-flash-preview-05-20"
 PDF_CONTEXT_LLM_TEMP = 0.1
 PDF_EMBED_MODEL_NAME = "models/embedding-001"
 PDF_CHUNK_SIZE = 512
 PDF_CHUNK_OVERLAP = 50
 PDF_SIMILARITY_TOP_K = 4
 PDF_PERSIST_BASE_DIR_NAME = "agent_pdf_storage"
-WRITING_LLM_MODEL = "models/gemini-2.0-flash"  # Can be same as PDF_CONTEXT_LLM_MODEL or different
+WRITING_LLM_MODEL = "gemini-2.5-flash-preview-05-20"  # Can be same as PDF_CONTEXT_LLM_MODEL or different
 WRITING_LLM_TEMP = 0.7 # Temperature for creative document generation
 WRITING_OUTPUT_BASE_DIR_NAME = "agent_generated_documents"
 
@@ -79,6 +80,7 @@ CONTENT REQUIREMENTS:
 2.  **Density and Efficiency:** The document must be as compact and information-dense as possible while remaining perfectly readable and comprehensive. Your goal is to convey all necessary information in the fewest possible words and pages. Prioritize impactful information over lengthy explanations.
 3.  **Professional Tone:** Maintain a highly formal, objective, and polished tone throughout the entire document.
 4.  **Completeness:** Ensure the document is self-contained and thoroughly covers the requested topic from introduction to conclusion, as appropriate for the document type.
+5.  **Handle Autonomous Fillings:** The input text may contain sections marked like `[AI AUTONOMOUSLY FILLED: Some generated text]`. When you encounter this pattern, render *only* the text inside the brackets (`Some generated text`) in the final markdown output, replacing the original placeholder text entirely. Do NOT include the `[AI AUTONOMOUSLY FILLED: ]` part in the output markdown.
 
 USER'S DOCUMENT REQUEST: "{user_document_request}"
 
@@ -99,7 +101,7 @@ class Agent:
         self.writing_output_dir = Path(f"./{WRITING_OUTPUT_BASE_DIR_NAME}")
         self.writing_output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.writing_llm = Gemini(
+        self.writing_llm = RateLimitedGemini(
             model_name=WRITING_LLM_MODEL, # Corrected parameter name
             api_key=GeminiKey,
             temperature=WRITING_LLM_TEMP
@@ -244,7 +246,7 @@ class Agent:
         full_writing_prompt = WRITING_SYSTEM_PROMPT_TEMPLATE.format(user_document_request=document_description)
         try:
             if self.verbose:
-                print(f"--- [{self.name}] Sending request to writing LLM (Model: {self.writing_llm.model_name}) ---")
+                print(f"--- [{self.name}] Sending request to writing LLM (Model: {self.writing_llm.metadata.model_name}) ---")
             
             # Using .complete for synchronous call as this tool function is synchronous
             response = self.writing_llm.complete(full_writing_prompt)
@@ -392,9 +394,9 @@ class Agent:
                 raise ValueError("GeminiKey (GOOGLE_API_KEY) not found. Cannot configure PDF embedding model.")
 
             # Configure Settings specifically for PDF operations
-            Settings.llm = Gemini(
-                model=PDF_CONTEXT_LLM_MODEL, 
-                api_key=GeminiKey, 
+            Settings.llm = RateLimitedGemini(
+                model=PDF_CONTEXT_LLM_MODEL,
+                api_key=GeminiKey,
                 temperature=PDF_CONTEXT_LLM_TEMP
             )
             Settings.embed_model = GeminiEmbedding(

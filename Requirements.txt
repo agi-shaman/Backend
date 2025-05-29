@@ -7,7 +7,13 @@ pypdf
 dotenv
 pymupdf
 llama-index-readers-file
+<<<<<<< HEAD
+reportlab
+llama-index-readers-web
+tenacity
+=======
 llama-index-readers-web
 googlesearch-python
 reportlab
 llama-index-readers-web
+>>>>>>> f7b2a8a69727b60dfa7033caec5eba13c485a4ba
