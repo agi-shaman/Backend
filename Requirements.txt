@@ -1,30 +1,13 @@
 llama-index
 llama-index-llms-gemini
 python-dotenv
-<<<<<<< HEAD
-google-generativeai 
-
-
-PDF Generation:
-import os
-import re  # For parsing markdown-like syntax
-from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# LlamaIndex imports
-from llama_index.llms.gemini import Gemini
-
-# PDF Creation imports (ReportLab)
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from reportlab.lib import colors
-=======
 llama-index-embeddings-gemini
 google-generativeai
 pypdf
 dotenv
->>>>>>> 4f74ade5f4c0879c8ed8791949b82f047c5b1bbb
+pymupdf
+llama-index-readers-file
+llama-index-readers-web
+googlesearch-python
+reportlab
+llama-index-readers-web

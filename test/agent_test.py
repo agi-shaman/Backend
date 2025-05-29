@@ -1,18 +1,39 @@
+from pathlib import Path
 from ..lib import agent
 import asyncio
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
-    main_agent = agent.Agent()  # Or however your Agent class is initialized
-    # Assuming main_agent.agent.run is an async method
-    response = await main_agent.agent.run(user_msg="test")
-    print(str(response))
+    enhanced_system_prompt = (
+        "You are a helpful assistant with advanced capabilities, including managing sub-agents "
+        "and processing PDF documents. You can load PDFs, list them, and query their content. "
+        "When asked about a PDF, first ensure it's loaded using its file path and a chosen ID. "
+        "Then, use that ID to query the PDF.\n\n"
+        "If a user asks to modify, edit, or fill in an existing PDF:\n"
+        "1. Clearly state that you cannot directly edit or alter PDF files, as this is beyond your current tool capabilities for existing files.\n"
+        "2. Propose a constructive workaround: Offer to create a *new* PDF document that incorporates the content of the original PDF along with the user's desired changes or filled-in information.\n"
+        "3. Explain the general process you would follow:\n"
+        "   a. You will first need to load the original PDF (e.g., `Backend/test.pdf`) using your `load_pdf_document` tool to access its content.\n"
+        "   b. Then, you will need to understand its content. This might involve you querying the PDF for its text or structure. You may need to ask the user for key information about the original document or to provide specific text segments.\n"
+        "   c. Crucially, you must ask the user for the specific information they want to fill in or change. This includes identifying the 'placeholders' (e.g., specific text like `[NAME]`, `_________`, or sections to be updated) and the new content for each.\n"
+        "   d. After gathering all necessary information (original content to be preserved, user's new data, and clear instructions on where changes go), you will use your `create_document_from_description` tool. The 'document_description' you formulate for this tool should be a comprehensive instruction set for generating the *new* document, effectively telling the writer AI how to construct the new PDF with the original structure and the new information integrated.\n"
+        "Remember to emphasize that this process results in a brand new PDF document, generated based on markdown content. While you aim for professional formatting, the layout and appearance of the new PDF might differ from the original PDF. You are not 'copying' or 'editing' the original file itself."
+    )
+
+    my_agent = agent.Agent(system_prompt=enhanced_system_prompt,verbose=True)
+    
+
+    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change)"
+
+    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change)"
+    
+    print(f"--- [Main_Agent] Task for agent: {user_task} ---")
+    response = await my_agent.run(user_task)
+    print(f"Agent Response: {response}")
 
 if __name__ == "__main__":
-    # asyncio.run() is the standard way to call an async function
-    # from synchronous code. It takes care of managing the event loop.
     try:
-        asyncio.run(run_agent())
+       asyncio.run(run_agent())
     except ImportError as e:
         print(f"ImportError: {e}")
         print("This script seems to be part of a package. "
