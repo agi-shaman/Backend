@@ -4,6 +4,9 @@ from llama_index.core.agent.workflow import FunctionAgent
 import shutil
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
+from llama_index.readers.web import SimpleWebPageReader
+
+from .QueryTypes import QueryTypes
 from .rate_limited_gemini import RateLimitedGemini
 from dotenv import load_dotenv
 import os
@@ -28,6 +31,7 @@ import mimetypes
 from google.oauth2.credentials import Credentials as GoogleCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+#import QueryTypes
 
 try:
     from .pdf_writer_utility import create_styled_pdf_from_markdown
@@ -55,11 +59,14 @@ PDF_CONTEXT_LLM_TEMP = 0.1
 PDF_EMBED_MODEL_NAME = "models/embedding-001"
 PDF_CHUNK_SIZE = 512
 PDF_CHUNK_OVERLAP = 50
-PDF_SIMILARITY_TOP_K = 4
+ITEM_SIMILARITY_TOP_K = 4
 PDF_PERSIST_BASE_DIR_NAME = "agent_pdf_storage"
 WRITING_LLM_MODEL = "gemini-2.5-flash-preview-05-20"  # Can be same as PDF_CONTEXT_LLM_MODEL or different
 WRITING_LLM_TEMP = 0.7 # Temperature for creative document generation
 WRITING_OUTPUT_BASE_DIR_NAME = "agent_generated_documents"
+
+PDF_TYPE = "pdf"
+URL_TYPE = "url"
 
 WRITING_SYSTEM_PROMPT_TEMPLATE = """
 You are an expert AI document author, specializing in creating dense, well-structured, and professionally formatted documents suitable for formal use. Your output MUST be pure markdown, adhering strictly to the following guidelines.
@@ -104,9 +111,9 @@ class Agent:
         self.verbose = verbose
         self.SubWorkers = {}
         self._add_tools()
-        self.pdf_query_engines = {}
-        self.pdf_persist_base_dir = Path(f"./{PDF_PERSIST_BASE_DIR_NAME}")
-        self.pdf_persist_base_dir.mkdir(parents=True, exist_ok=True)
+        self.query_engines = {}
+        self.persist_base_dir = Path(f"./{PDF_PERSIST_BASE_DIR_NAME}")
+        self.persist_base_dir.mkdir(parents=True, exist_ok=True)
         self._pdf_settings_configured = False
         self._email_settings_configured = False
         self.writing_output_dir = Path(f"./{WRITING_OUTPUT_BASE_DIR_NAME}")
@@ -177,6 +184,23 @@ class Agent:
         )
         self.tools.append(call_sub_agent_tool)
 
+        # --- URL Functionality Tools ---
+        def _load_url_document_tool_func(url: str, url_id: str) -> str:
+            if self.verbose: print(f"--- [{self.name}] Tool 'load_url_document' called with path: {url}, id: {url_id} ---")
+            return self.load_and_index_Url(url=url, url_id=url_id)
+
+        load_url_tool = FunctionTool.from_defaults(
+            fn=_load_url_document_tool_func,
+            name="load_url",
+            description=(
+                "Loads and indexes a website from a given url for future querying. "
+                "Required arguments: 'url' (string, the full or relative url to the website), "
+                "'url_id' (string, a unique identifier you assign to this URL, e.g., 'site1', 'sportscars2'). This ID will be used for querying and listing. create one yourself without asking"
+                "Returns a status message. After successful loading, the website can be queried using its 'url_id'."
+            )
+        )
+        self.tools.append(load_url_tool)
+
         # --- PDF Functionality Tools ---
         def _load_pdf_document_tool_func(pdf_file_path: str, pdf_id: str, force_reindex: bool = False) -> str:
             if self.verbose: print(f"--- [{self.name}] Tool 'load_pdf_document' called with path: {pdf_file_path}, id: {pdf_id}, force_reindex: {force_reindex} ---")
@@ -197,16 +221,16 @@ class Agent:
 
         def _query_pdf_document_tool_func(pdf_id: str, query_text: str) -> str:
             if self.verbose: print(f"--- [{self.name}] Tool 'query_pdf_document' called with id: {pdf_id}, query: '{query_text[:70]}...' ---")
-            return self.query_indexed_pdf(pdf_id=pdf_id, query_text=query_text)
+            return self.query_indexed_item(item_id=pdf_id, query_text=query_text)
 
         query_pdf_tool = FunctionTool.from_defaults(
             fn=_query_pdf_document_tool_func,
-            name="query_pdf_document",
+            name="query_item_document",
             description=(
-                "Queries a previously loaded PDF document using its assigned 'pdf_id'. "
-                "Required arguments: 'pdf_id' (string, the identifier used when loading the PDF), "
-                "'query_text' (string, the question or query about the PDF content). "
-                "Returns the answer found in the PDF or an error message if the pdf_id is not found or an error occurs during querying."
+                "Queries a previously loaded document using its assigned id. "
+                "Required arguments: 'item_id' (string, the identifier used when loading the document), "
+                "'query_text' (string, the question or query about the document content). "
+                "Returns the answer found in the document or an error message if the item_id is not found or an error occurs during querying."
             )
         )
         self.tools.append(query_pdf_tool)
@@ -217,8 +241,8 @@ class Agent:
 
         list_pdfs_tool = FunctionTool.from_defaults(
             fn=_list_loaded_pdfs_tool_func,
-            name="list_loaded_pdfs",
-            description="Lists the unique IDs of all PDF documents that are currently active in memory and available for querying."
+            name="list_loaded_items",
+            description="Lists the unique IDs of all documents that are currently active in memory and available for querying."
         )
         self.tools.append(list_pdfs_tool)
 
@@ -696,6 +720,77 @@ class Agent:
             if self.verbose:
                 print(f"--- [{self.name}] LlamaIndex.Settings configured for PDF.Embed: {PDF_EMBED_MODEL_NAME}, Parser: chunk_size={PDF_CHUNK_SIZE} ---")
 
+
+    def load_and_index_Url(self, url: str, url_id: str):
+        # --- RAG Pipeline ---
+        # 3. Load data from the URL
+        my_gemini_embed_model = Settings.embed_model
+        if not isinstance(my_gemini_embed_model, GeminiEmbedding):
+            print("CRITICAL: Settings.embed_model is not a GeminiEmbedding instance. Re-initializing for local use.")
+            # Fallback if global settings failed, or for explicit local control
+            try:
+                Settings.embed_model = GeminiEmbedding(model_name="models/embedding-001")
+            except Exception as e_embed_init:
+                print(f"Failed to initialize GeminiEmbedding locally: {e_embed_init}")
+                raise
+
+        sane_url_id = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in url_id)
+        if not sane_url_id: # Should not happen if pdf_id is not empty
+             sane_url_id = "default_url_id"
+        if url_id != sane_url_id and self.verbose:
+            print(f"--- [{self.name}] Sanitized pdf_id from '{url_id}' to '{sane_url_id}' for directory naming. ---")
+
+        persist_dir = self.persist_base_dir / sane_url_id
+
+        try:
+            if sane_url_id in self.query_engines:
+                return f"PDF '{url_id}' (ID: {sane_url_id}) is already loaded in memory. Use force_reindex=True to reload from file."
+
+
+            index = None
+            if persist_dir.exists():
+                if self.verbose:
+                    print(f"--- [{self.name}] Loading existing index for '{sane_url_id}' from {persist_dir} ---")
+                storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
+                index = load_index_from_storage(storage_context, embed_model=Settings.embed_model)  # Uses Settings.embed_model
+                if self.verbose:
+                    print(f"--- [{self.name}] Index for '{sane_url_id}' loaded successfully. ---")
+            else:
+                if self.verbose:
+                    print(f"--- [{self.name}] Creating new index for '{sane_url_id}' from URL: {url} ---")
+
+                persist_dir.mkdir(parents=True, exist_ok=True)
+
+                loader = SimpleWebPageReader(html_to_text=True)
+                documents = []
+                try:
+                    # It's good practice to set a timeout for web requests
+                    documents = loader.load_data(urls=[url])
+                except Exception as e:
+                    print(f"Error loading data from URL {url}: {e}")
+                    print(
+                        "This could be due to the website structure, content type (e.g., PDF instead of HTML), access restrictions, or timeout.")
+                    return
+
+                # 4. Create an index from the loaded documents
+                index = VectorStoreIndex.from_documents(documents, embed_model=Settings.embed_model)
+
+            if index:
+                # Query engine uses Settings.llm by default if not overridden
+                query_engine = index.as_query_engine(similarity_top_k=ITEM_SIMILARITY_TOP_K)
+                self.query_engines[sane_url_id] = QueryTypes(query_engine, URL_TYPE)
+                return f"URL '{url}' (ID: {sane_url_id}) processed. Query engine ready."
+            else:  # Should not be reached if logic is correct
+                return f"Error: Failed to load or create index for URL '{url}' (ID: {sane_url_id})."
+        except Exception as e:
+            error_msg = f"Error processing URL '{url}' (ID: {url_id}): {str(e)}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+                import traceback
+                traceback.print_exc()
+            return error_msg
+
+
     def load_and_index_pdf(self, pdf_file_path_str: str, pdf_id: str, force_reindex: bool = False) -> str:
         """
         Loads a PDF from the given path, processes it, creates/loads a vector index,
@@ -714,10 +809,10 @@ class Agent:
         if pdf_id != sane_pdf_id and self.verbose:
             print(f"--- [{self.name}] Sanitized pdf_id from '{pdf_id}' to '{sane_pdf_id}' for directory naming. ---")
         
-        persist_dir = self.pdf_persist_base_dir / sane_pdf_id
+        persist_dir = self.persist_base_dir / sane_pdf_id
 
         try:
-            if sane_pdf_id in self.pdf_query_engines and not force_reindex:
+            if sane_pdf_id in self.query_engines and not force_reindex:
                 return f"PDF '{pdf_id}' (ID: {sane_pdf_id}) is already loaded in memory. Use force_reindex=True to reload from file."
 
             if force_reindex and persist_dir.exists():
@@ -759,12 +854,11 @@ class Agent:
 
             if index:
                 # Query engine uses Settings.llm by default if not overridden
-                query_engine = index.as_query_engine(similarity_top_k=PDF_SIMILARITY_TOP_K)
-                self.pdf_query_engines[sane_pdf_id] = query_engine
+                query_engine = index.as_query_engine(similarity_top_k=ITEM_SIMILARITY_TOP_K)
+                self.query_engines[sane_pdf_id] = QueryTypes(query_engine, PDF_TYPE)
                 return f"PDF '{pdf_file_path_str}' (ID: {sane_pdf_id}) processed. Query engine ready."
             else: # Should not be reached if logic is correct
                 return f"Error: Failed to load or create index for PDF '{pdf_file_path_str}' (ID: {sane_pdf_id})."
-
         except Exception as e:
             error_msg = f"Error processing PDF '{pdf_file_path_str}' (ID: {pdf_id}): {str(e)}"
             if self.verbose:
@@ -773,47 +867,47 @@ class Agent:
                 traceback.print_exc()
             return error_msg
 
-    def query_indexed_pdf(self, pdf_id: str, query_text: str) -> str:
+    def query_indexed_item(self, item_id: str, query_text: str) -> str:
         """
         Queries a previously loaded and indexed PDF using its ID.
         """
         self._ensure_pdf_settings_configured() # Ensure settings are ready
 
-        sane_pdf_id = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in pdf_id)
-        if not sane_pdf_id: sane_pdf_id = "default_pdf_id"
+        sane_item_id = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in item_id)
+        if not sane_item_id: sane_item_id = "default_item_id"
 
-        if sane_pdf_id not in self.pdf_query_engines:
-            persist_dir = self.pdf_persist_base_dir / sane_pdf_id
+        if sane_item_id not in self.query_engines:
+            persist_dir = self.persist_base_dir / sane_item_id
             if persist_dir.exists():
                 if self.verbose:
-                    print(f"--- [{self.name}] PDF ID '{sane_pdf_id}' not in memory, attempting to load from storage: {persist_dir} ---")
+                    print(f"--- [{self.name}] ITEM ID '{sane_item_id}' not in memory, attempting to load from storage: {persist_dir} ---")
                 try:
                     # This re-loading essentially re-runs part of load_and_index_pdf logic
                     # It's a simplified auto-load. For full state persistence, Agent state would need saving/loading.
                     storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
                     index = load_index_from_storage(storage_context) # Uses Settings.embed_model
-                    query_engine = index.as_query_engine(similarity_top_k=PDF_SIMILARITY_TOP_K) # Uses Settings.llm
-                    self.pdf_query_engines[sane_pdf_id] = query_engine
+                    query_engine = index.as_query_engine(similarity_top_k=ITEM_SIMILARITY_TOP_K) # Uses Settings.llm
+                    self.query_engines[sane_item_id] = query_engine
                     if self.verbose:
-                        print(f"--- [{self.name}] Successfully loaded index and query engine for '{sane_pdf_id}' from storage. ---")
+                        print(f"--- [{self.name}] Successfully loaded index and query engine for '{sane_item_id}' from storage. ---")
                 except Exception as e:
-                    msg = f"Error: PDF ID '{pdf_id}' (sanitized: {sane_pdf_id}) not in active query engines, and failed to auto-load from storage {persist_dir}: {e}"
+                    msg = f"Error: ITEM ID '{item_id}' (sanitized: {sane_item_id}) not in active query engines, and failed to auto-load from storage {persist_dir}: {e}"
                     if self.verbose: print(f"--- [{self.name}] {msg} ---")
                     return msg
             else:
-                return f"Error: PDF ID '{pdf_id}' (sanitized: {sane_pdf_id}) not found. Please load it first using 'load_pdf_document'."
+                return f"Error: ITEM '{item_id}' (sanitized: {sane_item_id}) not found. Please load it first using 'load_pdf_document'."
 
-        query_engine = self.pdf_query_engines[sane_pdf_id]
+        query_engine = self.query_engines[sane_item_id].query_engine
         try:
             if self.verbose:
-                print(f"--- [{self.name}] Querying PDF '{sane_pdf_id}' with: '{query_text}' ---")
+                print(f"--- [{self.name}] Querying ITEM '{sane_item_id}' with: '{query_text}' ---")
             response = query_engine.query(query_text) # Uses Settings.llm via the query_engine
             response_str = str(response)
             if self.verbose:
-                print(f"--- [{self.name}] Response from PDF '{sane_pdf_id}': '{response_str}' ---")
+                print(f"--- [{self.name}] Response from ITEM '{sane_item_id}': '{response_str}' ---")
             return response_str
         except Exception as e:
-            error_msg = f"Error querying PDF '{sane_pdf_id}': {str(e)}"
+            error_msg = f"Error querying ITEM '{sane_item_id}': {str(e)}"
             if self.verbose:
                 print(f"--- [{self.name}] {error_msg} ---")
                 import traceback
@@ -827,9 +921,12 @@ class Agent:
         # For more robustness, could also scan self.pdf_persist_base_dir for existing indexes
         # and report them as "available on disk, can be loaded/queried".
         # For now, just lists what's in memory.
-        if not self.pdf_query_engines:
-            return "No PDFs are currently active in memory."
-        return f"Active PDF IDs in memory: {list(self.pdf_query_engines.keys())}"
+        if not self.query_engines:
+            return "No Items are currently active in memory."
+        out = ""
+        for key in self.query_engines.keys():
+            out += key + " - " + self.query_engines[key].type + "\n"
+        return f"Active ITEMs IDs in memory and their types: {out}"
 
     async def run(self, user_msg: str) -> str:
         if self.verbose: 
