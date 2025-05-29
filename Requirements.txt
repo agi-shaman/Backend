@@ -1,1 +1,2 @@
 llama-index
+llama-index-llms-gemini
