@@ -1,10 +1,22 @@
+from pathlib import Path
 from ..lib import agent
 import asyncio
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
-    main_agent = agent.Agent(system_prompt="You are a master orchestrator, you are created to test your ability to create sub agents",verbose=True)
-    print(await main_agent.run(user_msg="Create two subagents named 'AgentA' and 'AgentB' with the functions you are provided with. Then, using the 'call_specific_sub_agent' tool, call 'Main_Agent/AgentA' and 'Main_Agent/AgentB', ask them how they are feeling, and respond to their answers."))
+    test_pdf_path = Path("test_document.pdf")
+
+    my_agent = agent.Agent(
+        system_prompt=
+            "You are a helpful assistant with advanced capabilities, including managing sub-agents "
+            "and processing PDF documents. You can load PDFs, list them, and query their content. "
+            "When asked about a PDF, first ensure it's loaded using its file path and a chosen ID. "
+            "Then, use that ID to query the PDF."
+        ,verbose=True)
+    
+    # Test 1: List currently (empty) loaded PDFs
+    response = await my_agent.run("List all loaded PDF documents.")
+    print(f"Test 1 Response: {response}") # Expected: No PDFs loaded.
 
 if __name__ == "__main__":
     try:
