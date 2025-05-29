@@ -14,6 +14,6 @@ llm = Gemini(
 class Agent:
     def __init__(self):
         self.agent = FunctionAgent(
-        tools=[search_web],
+        tools=[],
         llm=llm,
         system_prompt="You are a helpful assistant that can search the web for information.",)
