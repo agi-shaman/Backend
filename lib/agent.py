@@ -126,8 +126,9 @@ FILE_TYPE = "file"
 URL_TYPE = "url"
 
 class Agent:
-    def __init__(self, system_prompt: str = autonomous_system_prompt, name: str = "Main_Agent", verbose: bool = False):
+    def __init__(self, server, system_prompt: str = autonomous_system_prompt, name: str = "Main_Agent", verbose: bool = False):
         self.name = name
+        self.server = server
         self.tools = []
         self.verbose = verbose
         self.SubWorkers = {}
@@ -372,6 +373,23 @@ class Agent:
         )
         self.tools.append(draft_email_tool)
 
+        def _schedule_task_tool_func(prompt: str, scheduled_time_iso: str) -> str:
+            """schedules a task for later execution."""
+            if self.verbose: print(f"--- [{self.name}] Tool 'schedule_task' called for task {str} ---")
+            return self._schedule_task_internally(recipient=recipient, subject=subject, body=body, attachment_paths=attachment_paths)
+
+        schedule_task_tool = FunctionTool.from_defaults(
+            fn=_schedule_task_tool_func,
+            name="schedule_task",
+            description=(
+                "Schedules a task the will be given to you to execute at a given time. "
+                "Required arguments: 'prompt' (string, The prompt string for the new task.), "
+                "'scheduled_time_iso' (string, The scheduled time in ISO 8601 format (e.g., 2024-03-15T10:00:00Z).)."
+                "Returns a string containing A dictionary with status, message, and task_id if successful."
+            )
+        )
+        self.tools.append(schedule_task_tool)
+
         # --- CLI Input Tool ---
         cli_input_tool = FunctionTool.from_defaults(
             fn=self._get_text_input_tool_func,
@@ -386,7 +404,7 @@ class Agent:
         self.tools.append(cli_input_tool)
 
     def _get_text_input_tool_func(self, prompt: str) -> str:
-        additional_input = input(prompt)
+        additional_input = self.server.wait_for_input(prompt)
         print("-------------------------------------------\n")
         return f"The user responded to the prompt '{prompt}' with: '{additional_input}'."
 
@@ -608,6 +626,13 @@ class Agent:
                 import traceback
                 traceback.print_exc()
             return error_msg
+
+
+    def _schedule_task_internally(self, prompt: str, scheduled_time_iso: str) -> str:
+        if self.verbose:
+            print(f"--- [{self.name}] scheduling task at {scheduled_time_iso} ---")
+        return self.server._schedule_new_prompt_tool(prompt, scheduled_time_iso)
+
 
     async def CallSubAgent(self, name: str, task: str) -> str:
         """

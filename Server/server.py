@@ -30,9 +30,8 @@ class AgentResponse(BaseModel):
 
 
 # --- Agent Import ---
-# Attempt to import the real Agent, provide a dummy if it fails.
+# Attempt to import the real Agent, provide a more functional dummy if it fails.
 try:
-    # Assuming your Agent class is named Agent in ..lib.agent
     from ..lib.agent import Agent as ActualAgent
 
     print("Successfully imported Agent from ..lib.agent")
@@ -40,7 +39,7 @@ except ImportError:
     print("Warning: Could not import Agent from ..lib.agent. Using dummy Agent.")
 
 
-    class ActualAgent:  # Dummy Agent
+    class ActualAgent:  # More functional Dummy Agent
         def __init__(self, verbose: bool = False,
                      tool_registry: Dict[str, Callable[..., Awaitable[Any]]] | None = None):
             self.verbose = verbose
@@ -52,19 +51,41 @@ except ImportError:
             if self.verbose:
                 print(f"[Dummy Agent] Received task: {task_prompt}")
 
+            response_parts = [f"Dummy agent processed: '{task_prompt}'."]
+
+            # Example: Using "ask_user_tool"
             if "question for user" in task_prompt.lower() and "ask_user_tool" in self.tool_registry:
-                question_to_ask = "What is your favorite color for this task?"  # Example
+                question_to_ask = "What is your favorite color for this task?"
                 if self.verbose:
                     print(f"[Dummy Agent] Using 'ask_user_tool' to ask: {question_to_ask}")
                 try:
                     user_response = await self.tool_registry["ask_user_tool"](question=question_to_ask)
-                    return f"Dummy agent processed: '{task_prompt}'. User responded: '{user_response}'"
+                    response_parts.append(f"User responded to question: '{user_response}'.")
                 except Exception as e:
                     print(f"[Dummy Agent] Error calling 'ask_user_tool': {e}")
-                    return f"Dummy agent tried to ask user but failed: {e}"
+                    response_parts.append(f"Tried to ask user but failed: {e}.")
 
-            await asyncio.sleep(1)  # Simulate work
-            return f"Dummy agent processed: '{task_prompt}'"
+            # Example: Using "schedule_future_prompt"
+            if "follow up in 1 minute" in task_prompt.lower() and "schedule_future_prompt" in self.tool_registry:
+                follow_up_prompt = f"This is a scheduled follow-up for the task: '{task_prompt}'"
+                future_time = datetime.now(timezone.utc) + timedelta(minutes=1)
+                future_time_iso = future_time.isoformat()
+                if self.verbose:
+                    print(
+                        f"[Dummy Agent] Using 'schedule_future_prompt' for: '{follow_up_prompt}' at {future_time_iso}")
+                try:
+                    schedule_result = await self.tool_registry["schedule_future_prompt"](
+                        prompt=follow_up_prompt,
+                        scheduled_time_iso=future_time_iso
+                    )
+                    response_parts.append(
+                        f"Scheduled follow-up: {schedule_result.get('message', 'Status: ' + schedule_result.get('status', 'unknown'))}.")
+                except Exception as e:
+                    print(f"[Dummy Agent] Error calling 'schedule_future_prompt': {e}")
+                    response_parts.append(f"Tried to schedule follow-up but failed: {e}.")
+
+            await asyncio.sleep(0.5)  # Simulate some base work
+            return " ".join(response_parts)
 
 AgentType = ActualAgent  # Use this type hint
 
@@ -78,8 +99,6 @@ class ApiServer:
     def __init__(self,
                  agent_class: type[AgentType] = ActualAgent,
                  agent_verbose: bool = True,
-                 # Pass any specific args your real Agent might need
-                 # agent_constructor_args: dict | None = None,
                  csv_file_path: str = DEFAULT_CSV_FILE_PATH,
                  scheduler_interval: int = DEFAULT_SCHEDULER_INTERVAL_SECONDS
                  ):
@@ -89,40 +108,67 @@ class ApiServer:
 
         # Tool registry for the agent: maps tool names to server methods
         self.tool_registry: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "ask_user_tool": self._ask_user_via_server
-            # Add other server-side functions the agent can call here
-            # e.g., "get_server_time": self._get_current_server_time
+            "ask_user_tool": self._ask_user_via_server,
+            "schedule_future_prompt": self._schedule_new_prompt_tool  # New tool added here
         }
 
         print("Initializing agent...")
-        # agent_args = agent_constructor_args if agent_constructor_args else {}
         self.agent: AgentType = agent_class(
+            # Ensure your ActualAgent's __init__ accepts these named arguments
             self,
-            verbose=agent_verbose # Pass server-side tools to the agent
-            # **agent_args # Spread other constructor args if any
+            verbose=agent_verbose,
         )
         print("Agent initialized.")
 
         self.app = FastAPI(
             title="Agent Processing API with Scheduling (Class-based)",
-            description="An API to submit tasks to an AI agent, including scheduling.",
-            version="1.3.0",
-            lifespan=self._lifespan_manager  # Register lifespan context manager
+            description="An API to submit tasks to an AI agent, including scheduling and AI-driven scheduling.",
+            version="1.4.0",  # Incremented version
+            lifespan=self._lifespan_manager
         )
         self._register_routes()
 
     async def _ask_user_via_server(self, question: str) -> str:
-        """
-        This is a server-side function that the Agent can call via its tool_registry.
-        It's a placeholder for interacting with a user, perhaps via Firebase or another channel.
-        """
-        # TODO: Implement actual user interaction logic (e.g., via Firebase, websocket, etc.)
         print(f"[Server Tool - _ask_user_via_server] Agent asked: '{question}'")
-        # For now, simulate getting input or returning a placeholder
-        await asyncio.sleep(0.1)  # Simulate a tiny delay for I/O
-        return "User responded: 'I have no Idea, generate some temp data'. (Placeholder from server)"
+        await asyncio.sleep(0.1)
+        return "User responded: 'Blue is my favorite color'. (Placeholder from server)"
 
-    # --- CSV Helper Methods ---
+    async def _schedule_new_prompt_tool(self, prompt: str, scheduled_time_iso: str) -> Dict[str, Any]:
+        """
+        Tool for the AI Agent to schedule a new prompt for future execution.
+        Args:
+            prompt: The prompt string for the new task.
+            scheduled_time_iso: The scheduled time in ISO 8601 format (e.g., "2024-03-15T10:00:00Z").
+        Returns:
+            A dictionary with status, message, and task_id if successful.
+        """
+        print(f"[Server Tool - _schedule_new_prompt_tool] Agent wants to schedule: '{prompt}' at {scheduled_time_iso}")
+        try:
+            # Parse and validate scheduled_time
+            scheduled_time = datetime.fromisoformat(scheduled_time_iso)
+            if scheduled_time.tzinfo is None:  # Ensure timezone aware, assume UTC if naive
+                scheduled_time_utc = scheduled_time.replace(tzinfo=timezone.utc)
+            else:
+                scheduled_time_utc = scheduled_time.astimezone(timezone.utc)
+
+            if scheduled_time_utc <= datetime.now(timezone.utc):
+                return {"status": "error", "message": "Scheduled time must be in the future."}
+
+            task_id = str(uuid.uuid4())
+            self._add_task_to_csv(task_id, prompt, scheduled_time_utc)  # Use existing CSV logic
+            return {
+                "status": "success",
+                "message": f"New prompt successfully scheduled for {scheduled_time_utc.isoformat()}.",
+                "task_id": task_id
+            }
+        except ValueError as ve:  # Handles invalid ISO format
+            print(f"[Server Tool Error] Invalid ISO format for scheduled_time_iso: {ve}")
+            return {"status": "error", "message": f"Invalid scheduled time format: {str(ve)}"}
+        except Exception as e:
+            print(f"[Server Tool Error] Failed to schedule new prompt: {e}")
+            return {"status": "error", "message": f"Failed to schedule new prompt: {str(e)}"}
+
+    # --- CSV Helper Methods (identical to before) ---
     def _initialize_csv(self):
         if not os.path.exists(self.csv_file_path):
             with open(self.csv_file_path, mode='w', newline='', encoding='utf-8') as f:
@@ -174,7 +220,7 @@ class ApiServer:
                         scheduled_time_utc = scheduled_time_utc.replace(tzinfo=timezone.utc)
                     if scheduled_time_utc <= now_utc:
                         task['status'] = "RUNNING"
-                        due_tasks_to_run.append(dict(task))  # Add a copy
+                        due_tasks_to_run.append(dict(task))
                         modified = True
                         print(f"Scheduler: Marking task {task['id']} as RUNNING.")
                 except ValueError as e:
@@ -201,12 +247,11 @@ class ApiServer:
         if modified:
             self._write_all_tasks_to_csv(all_tasks)
 
-    # --- Agent Task Execution Method ---
     async def _run_agent_task_async(self, task_prompt: str, task_id: str | None = None) -> tuple[str, str | None]:
         prefix = f"[Agent Task ID: {task_id}]" if task_id else "[Agent Task]"
         print(f"\n--- {prefix} Executing: {task_prompt} ---")
         try:
-            response = await self.agent.run(task_prompt)  # Use self.agent
+            response = await self.agent.run(task_prompt)
             print(f"\n--- {prefix} Finished. Response: {response} ---")
             return response, None
         except Exception as e:
@@ -214,7 +259,6 @@ class ApiServer:
             print(f"\n--- {prefix} Error during execution: {e} ---")
             return "", error_msg
 
-    # --- Scheduler Logic Method ---
     async def _scheduler_loop(self):
         print(f"Scheduler loop started. Will check for tasks every {self.scheduler_interval} seconds.")
         while True:
@@ -241,17 +285,16 @@ class ApiServer:
 
                     asyncio.create_task(execute_and_update_scheduled_task(task_id, prompt))
             except Exception as e:
-                print(f"SCHEDULER LOOP ERROR: {e}")  # Log error and continue loop
+                print(f"SCHEDULER LOOP ERROR: {e}")
             await asyncio.sleep(self.scheduler_interval)
 
-    # --- FastAPI Lifespan Method ---
     @asynccontextmanager
-    async def _lifespan_manager(self, app: FastAPI):  # app argument is passed by FastAPI
+    async def _lifespan_manager(self, app: FastAPI):
         print("Application startup: Initializing CSV and starting scheduler...")
         self._initialize_csv()
         self.scheduler_task_handle = asyncio.create_task(self._scheduler_loop())
         print("Scheduler started.")
-        yield  # Application runs here
+        yield
         print("Application shutdown: Stopping scheduler...")
         if self.scheduler_task_handle:
             self.scheduler_task_handle.cancel()
@@ -259,15 +302,14 @@ class ApiServer:
                 await self.scheduler_task_handle
             except asyncio.CancelledError:
                 print("Scheduler task cancelled successfully.")
-            except Exception as e:  # Catch any other exceptions during cancellation
+            except Exception as e:
                 print(f"Error during scheduler task cancellation: {e}")
         print("Scheduler stopped.")
 
+    def wait_for_input(self, prompt: str) -> str:  # This method is defined but not currently in tool_registry
+        print(f"[ApiServer - wait_for_input] Received prompt: {prompt}")
+        return "I have no idea. Generate some default values (from wait_for_input)"
 
-    def wait_for_input(self, prompt: str) -> str:
-        print("Waiting for input...")
-        return "I have no idea. Generate some default values"
-    # --- API Endpoints Registration ---
     def _register_routes(self):
         @self.app.post("/process_task", response_model=AgentResponse)
         async def process_task_endpoint(task_request: TaskRequest):
@@ -300,7 +342,7 @@ class ApiServer:
                 task_id=task_id
             )
 
-        @self.app.post("/schedule_task", response_model=AgentResponse)
+        @self.app.post("/schedule_task", response_model=AgentResponse)  # This is for external clients
         async def schedule_task_endpoint(schedule_request: ScheduleTaskRequest):
             prompt = schedule_request.prompt
             scheduled_time = schedule_request.scheduled_time
@@ -325,57 +367,31 @@ class ApiServer:
                 raise HTTPException(status_code=500, detail=f"Failed to schedule task: {str(e)}")
 
         @self.app.get("/view_tasks", response_model=list[dict])
-        async def view_tasks_endpoint():  # No 'self' if it's a local function inside _register_routes
-            # but it needs self to access _read_all_tasks_from_csv
-            # So, it should be defined to capture `self` from the outer scope
-            # or be passed `self` if that were possible with decorators directly.
-            # The current way it's defined inside _register_routes, it captures `self`.
-            tasks = self._read_all_tasks_from_csv()  # Correctly uses self from the outer scope
+        async def view_tasks_endpoint():
+            tasks = self._read_all_tasks_from_csv()
             if not tasks and not os.path.exists(self.csv_file_path):
                 return [{"message": "No CSV file found, or no tasks scheduled yet."}]
             return tasks
 
     def run_server(self, host: str = "127.0.0.1", port: int = 8001, reload: bool = False,
                    uvicorn_log_level: str = "info"):
-        """Runs the Uvicorn server for this FastAPI application."""
         print(f"Starting Uvicorn server on http://{host}:{port}")
         print(f"Scheduler will check for tasks every {self.scheduler_interval} seconds.")
         print(f"Access OpenAPI docs at http://{host}:{port}/docs")
 
         if reload:
-            # For reload=True, Uvicorn typically needs an "app string" like "module:instance.app_attribute".
-            # This is hard to make perfectly generic for programmatic start if script/instance names vary.
-            # The string provided in your original script "Backend.Server.server:app" assumes 'app' is a global.
-            # If this file is 'server.py' and the instance is 'api_server_instance' (see __main__),
-            # the string would be "server:api_server_instance.app".
-            print("Reload is enabled. For programmatic start, ensure Uvicorn can find the app string.")
-            print("It's often better to run 'uvicorn module:instance.app --reload' from CLI for reload.")
-            # Provide a placeholder string; this will likely need adjustment based on your file and instance names.
-            # Example: if this file is `my_server_module.py` and instance is `my_server = ApiServer()`
-            # then "my_server_module:my_server.app"
             uvicorn.run("server:api_server_instance.app", host=host, port=port, reload=True,
                         log_level=uvicorn_log_level)
         else:
             uvicorn.run(self.app, host=host, port=port, reload=False, log_level=uvicorn_log_level)
 
 
-# --- Main Block to Run Uvicorn ---
-# This part allows running the server directly from this script.
-# For Uvicorn reload from CLI to work (e.g., `uvicorn server:api_server_instance.app --reload`),
-# `api_server_instance` needs to be a global variable in this module.
 api_server_instance = ApiServer(
-    agent_class=ActualAgent,  # Pass the actual or dummy Agent class
+    agent_class=ActualAgent,
     agent_verbose=True,
-    csv_file_path="class_based_scheduled_tasks.csv",  # Example: custom CSV path
+    csv_file_path="class_based_scheduled_tasks.csv",
     scheduler_interval=ApiServer.DEFAULT_SCHEDULER_INTERVAL_SECONDS
 )
 
 if __name__ == "__main__":
-    # When running the script directly (e.g., `python server.py`)
-    # For development with reload, it's often easier to run from the command line:
-    # uvicorn server:api_server_instance.app --reload
-    # (assuming this file is server.py and api_server_instance is globally accessible as defined above)
-
-    # The run_server method handles non-reload cases well when called directly.
-    # For reload=True, the app_string in run_server needs to be accurate.
-    api_server_instance.run_server(reload=False)  # Set reload=True if you've configured the app string correctly.
+    api_server_instance.run_server(reload=False, port=8001)
