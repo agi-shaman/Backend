@@ -1,0 +1,4 @@
+user_google_access_token = "ya29.a0AW4Xtxib212yPr-Njb-HxCYNX9uWALRDqpNV7n5bBhchDjiKtkHhlExel4JJVq9Jj6FQfco4EpT2cmGvyWT45PLWUbPbqdIzuJdA5UJdtyEaOS4nITmNfCJ8wpMjISNjWlRvgaygjGw2HtOblMXgaq24Iz7YXEcuKfmTl6YLaCgYKAfoSARUSFQHGX2Mi8RazkZ4altj71GQl9bRoKA0175"
+
+def get_user_google_access_token():
+    return user_google_access_token
