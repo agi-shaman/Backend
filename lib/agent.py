@@ -8,6 +8,7 @@ from llama_index.readers.web import SimpleWebPageReader
 
 from .QueryTypes import QueryTypes
 from .rate_limited_gemini import RateLimitedGemini
+from .FileDecoder import get_file_content
 from dotenv import load_dotenv
 import os
 from llama_index.core.tools import FunctionTool
@@ -18,6 +19,7 @@ from llama_index.core import (
     StorageContext,
     load_index_from_storage,
     Settings,
+Document,
 )
 from .firebase import get_user_google_access_token
 from llama_index.readers.file import PyMuPDFReader
@@ -137,6 +139,7 @@ WRITING_LLM_TEMP = 0.7 # Temperature for creative document generation
 WRITING_OUTPUT_BASE_DIR_NAME = "agent_generated_documents"
 
 PDF_TYPE = "pdf"
+FILE_TYPE = "file"
 URL_TYPE = "url"
 
 WRITING_SYSTEM_PROMPT_TEMPLATE = """
@@ -249,7 +252,10 @@ class Agent:
         # --- URL Functionality Tools ---
         def _load_url_document_tool_func(url: str, url_id: str) -> str:
             if self.verbose: print(f"--- [{self.name}] Tool 'load_url_document' called with path: {url}, id: {url_id} ---")
-            return self.load_and_index_Url(url=url, url_id=url_id)
+            ret = self.load_and_index_Url(url=url, url_id=url_id)
+            if not ret:
+                ret = "The load url document tool failed to return data"
+            return ret
 
         load_url_tool = FunctionTool.from_defaults(
             fn=_load_url_document_tool_func,
@@ -264,29 +270,31 @@ class Agent:
         self.tools.append(load_url_tool)
 
         # --- PDF Functionality Tools ---
-        def _load_pdf_document_tool_func(pdf_file_path: str, pdf_id: str, force_reindex: bool = False) -> str:
-            if self.verbose: print(f"--- [{self.name}] Tool 'load_pdf_document' called with path: {pdf_file_path}, id: {pdf_id}, force_reindex: {force_reindex} ---")
-            return self.load_and_index_pdf(pdf_file_path_str=pdf_file_path, pdf_id=pdf_id, force_reindex=force_reindex)
+        # --- File Functionality Tools (replaces PDF tools) ---
+        def _load_file_document_tool_func(file_path: str, item_id: str, force_reindex: bool = False) -> str:
+            if self.verbose: print(f"--- [{self.name}] Tool 'load_file_document' called with path: {file_path}, id: {item_id}, force_reindex: {force_reindex} ---")
+            return self.load_and_index_item(file_path_str=file_path, item_id=item_id, force_reindex=force_reindex)
 
-        load_pdf_tool = FunctionTool.from_defaults(
-            fn=_load_pdf_document_tool_func,
-            name="load_pdf_document",
+        load_file_tool = FunctionTool.from_defaults(
+            fn=_load_file_document_tool_func,
+            name="load_file_document",
             description=(
-                "Loads and indexes a PDF document from a given file path for future querying. "
-                "Required arguments: 'pdf_file_path' (string, the full or relative path to the PDF file), "
-                "'pdf_id' (string, a unique identifier you assign to this PDF, e.g., 'doc1', 'user_agreement_v2'). This ID will be used for querying and listing. create one yourself without asking"
-                "Optional argument: 'force_reindex' (boolean, defaults to False. If True, any existing index for this pdf_id will be deleted and rebuilt from the PDF file). "
-                "Returns a status message. After successful loading, the PDF can be queried using its 'pdf_id'."
+                "Loads and indexes a document from a given file path for future querying. "
+                "This tool uses FileDecoder to support various formats including PDF, DOCX, XLSX, PPTX, TXT, HTML, and others. "
+                "Required arguments: 'file_path' (string, the full or relative path to the file), "
+                "'item_id' (string, a unique identifier you assign to this file, e.g., 'report1', 'spreadsheet_data'). This ID will be used for querying and listing. create one yourself without asking"
+                "Optional argument: 'force_reindex' (boolean, defaults to False. If True, any existing index for this item_id will be deleted and rebuilt from the file). "
+                "Returns a status message. After successful loading, the file content can be queried using its 'item_id'."
             )
         )
-        self.tools.append(load_pdf_tool)
+        self.tools.append(load_file_tool)
 
-        def _query_pdf_document_tool_func(pdf_id: str, query_text: str) -> str:
-            if self.verbose: print(f"--- [{self.name}] Tool 'query_pdf_document' called with id: {pdf_id}, query: '{query_text[:70]}...' ---")
-            return self.query_indexed_item(item_id=pdf_id, query_text=query_text)
+        def _query_item_document_tool_func(item_id: str, query_text: str) -> str:
+            if self.verbose: print(f"--- [{self.name}] Tool 'query_item_document' called with id: {item_id}, query: '{query_text[:70]}...' ---")
+            return self.query_indexed_item(item_id=item_id, query_text=query_text)
 
-        query_pdf_tool = FunctionTool.from_defaults(
-            fn=_query_pdf_document_tool_func,
+        query_item_tool = FunctionTool.from_defaults(
+            fn=_query_item_document_tool_func,
             name="query_item_document",
             description=(
                 "Queries a previously loaded document using its assigned id. "
@@ -295,18 +303,18 @@ class Agent:
                 "Returns the answer found in the document or an error message if the item_id is not found or an error occurs during querying."
             )
         )
-        self.tools.append(query_pdf_tool)
+        self.tools.append(query_item_tool)
 
-        def _list_loaded_pdfs_tool_func() -> str:
-            if self.verbose: print(f"--- [{self.name}] Tool 'list_loaded_pdfs' called ---")
-            return self.list_loaded_pdfs()
+        def _list_loaded_items_tool_func() -> str:
+            if self.verbose: print(f"--- [{self.name}] Tool 'list_loaded_items' called ---")
+            return self.list_loaded_pdfs() # Note: Function name is still list_loaded_pdfs but now lists all items
 
-        list_pdfs_tool = FunctionTool.from_defaults(
-            fn=_list_loaded_pdfs_tool_func,
+        list_items_tool = FunctionTool.from_defaults(
+            fn=_list_loaded_items_tool_func,
             name="list_loaded_items",
             description="Lists the unique IDs of all documents that are currently active in memory and available for querying."
         )
-        self.tools.append(list_pdfs_tool)
+        self.tools.append(list_items_tool)
 
         # --- NEW WAIT TOOL ---
         def _wait_seconds_tool_func(seconds: int) -> str:
@@ -860,77 +868,91 @@ class Agent:
             return error_msg
 
 
-    def load_and_index_pdf(self, pdf_file_path_str: str, pdf_id: str, force_reindex: bool = False) -> str:
+    def load_and_index_item(self, file_path_str: str, item_id: str, force_reindex: bool = False) -> str:
         """
-        Loads a PDF from the given path, processes it, creates/loads a vector index,
-        and stores a query engine for it.
+        Loads a file from the given path, processes its text content,
+        creates/loads a vector index, and stores a query engine for it.
+        Uses FileDecoder to handle various file types.
         """
-        self._ensure_pdf_settings_configured() # Crucial for PDF operations
-        
-        pdf_file_path = Path(pdf_file_path_str).resolve() # Resolve to absolute path
-        print(f"loading pdf - {pdf_file_path}")
-        if not pdf_file_path.exists() or not pdf_file_path.is_file():
-            return f"Error: PDF file not found at '{pdf_file_path_str}' (resolved to '{pdf_file_path}')."
-        # Basic sanitization for pdf_id to be used as a directory name
-        sane_pdf_id = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in pdf_id)
-        if not sane_pdf_id: # Should not happen if pdf_id is not empty
-             sane_pdf_id = "default_pdf_id" 
-        if pdf_id != sane_pdf_id and self.verbose:
-            print(f"--- [{self.name}] Sanitized pdf_id from '{pdf_id}' to '{sane_pdf_id}' for directory naming. ---")
-        
-        persist_dir = self.persist_base_dir / sane_pdf_id
+        self._ensure_pdf_settings_configured() # Settings are general for embedding/LLM
+
+        file_path = Path(file_path_str).resolve() # Resolve to absolute path
+        print(f"Attempting to load and index file: {file_path}")
+        if not file_path.exists() or not file_path.is_file():
+            return f"Error: File not found at '{file_path_str}' (resolved to '{file_path}')."
+
+        # Use FileDecoder to get content
+        content, error_msg = get_file_content(str(file_path))
+
+        if error_msg:
+            print(f"--- Error during file content extraction: {error_msg} ---")
+            return f"Error extracting content from '{file_path_str}': {error_msg}"
+
+        if not content or not content.strip():
+             print(f"--- No text content extracted from file: {file_path} ---")
+             return f"Error: No text content could be extracted from '{file_path_str}', or the file is not suitable for text summarization."
+
+        # Basic sanitization for item_id to be used as a directory name
+        sane_item_id = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in item_id)
+        if not sane_item_id: # Should not happen if item_id is not empty
+             sane_item_id = "default_item_id"
+        if item_id != sane_item_id and self.verbose:
+            print(f"--- [{self.name}] Sanitized item_id from '{item_id}' to '{sane_item_id}' for directory naming. ---")
+
+        item_persist_dir = self.persist_base_dir / sane_item_id
 
         try:
-            if sane_pdf_id in self.query_engines and not force_reindex:
-                return f"PDF '{pdf_id}' (ID: {sane_pdf_id}) is already loaded in memory. Use force_reindex=True to reload from file."
+            if sane_item_id in self.query_engines and not force_reindex:
+                return f"Item '{item_id}' (ID: {sane_item_id}) is already loaded in memory. Use force_reindex=True to reload from file."
 
-            if force_reindex and persist_dir.exists():
+            if force_reindex and item_persist_dir.exists():
                 if self.verbose:
-                    print(f"--- [{self.name}] FORCE_REINDEX: Deleting existing index for '{sane_pdf_id}' at {persist_dir} ---")
-                shutil.rmtree(persist_dir)
-            
+                    print(f"--- [{self.name}] FORCE_REINDEX: Deleting existing index for '{sane_item_id}' at {item_persist_dir} ---")
+                shutil.rmtree(item_persist_dir)
+
             index = None
-            if persist_dir.exists():
+            if item_persist_dir.exists():
                 if self.verbose:
-                    print(f"--- [{self.name}] Loading existing index for '{sane_pdf_id}' from {persist_dir} ---")
-                storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
+                    print(f"--- [{self.name}] Loading existing index for '{sane_item_id}' from {item_persist_dir} ---")
+                storage_context = StorageContext.from_defaults(persist_dir=str(item_persist_dir))
                 index = load_index_from_storage(storage_context) # Uses Settings.embed_model
                 if self.verbose:
-                    print(f"--- [{self.name}] Index for '{sane_pdf_id}' loaded successfully. ---")
+                    print(f"--- [{self.name}] Index for '{sane_item_id}' loaded successfully. ---")
             else:
                 if self.verbose:
-                    print(f"--- [{self.name}] Creating new index for '{sane_pdf_id}' from PDF: {pdf_file_path} ---")
-                
-                persist_dir.mkdir(parents=True, exist_ok=True)
-                
-                pdf_reader = PyMuPDFReader()
-                documents = pdf_reader.load_data(file_path=pdf_file_path, metadata=True)
-                if not documents:
-                    return f"Error: No documents were loaded from PDF '{pdf_file_path_str}'."
+                    print(f"--- [{self.name}] Creating new index for '{sane_item_id}' from file: {file_path} ---")
+
+                item_persist_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create a single Document from the extracted content
+                documents = [Document(text=content, metadata={'file_path': str(file_path)})]
+
+                if not documents: # Should not happen if content is not empty
+                    return f"Error: Could not create document object from extracted content for '{file_path_str}'."
                 if self.verbose:
-                    print(f"--- [{self.name}] Loaded {len(documents)} document object(s) from PDF. ---")
+                    print(f"--- [{self.name}] Created 1 document object from extracted text. ---")
 
                 nodes = Settings.node_parser.get_nodes_from_documents(documents, show_progress=self.verbose)
                 if not nodes:
-                    return f"Error: No nodes (chunks) were created from the PDF '{pdf_file_path_str}'."
+                    return f"Error: No nodes (chunks) were created from the content of '{file_path_str}'."
                 if self.verbose:
                     print(f"--- [{self.name}] Parsed into {len(nodes)} Node object(s). ---")
 
                 index = VectorStoreIndex(nodes, show_progress=self.verbose) # Uses Settings.embed_model
-                index.storage_context.persist(persist_dir=str(persist_dir))
+                index.storage_context.persist(persist_dir=str(item_persist_dir))
                 if self.verbose:
-                    print(f"--- [{self.name}] Index for '{sane_pdf_id}' created and persisted to {persist_dir}. ---")
+                    print(f"--- [{self.name}] Index for '{sane_item_id}' created and persisted to {item_persist_dir}. ---")
 
             if index:
                 # Query engine uses Settings.llm by default if not overridden
                 query_engine = index.as_query_engine(similarity_top_k=ITEM_SIMILARITY_TOP_K)
-                self.query_engines[sane_pdf_id] = QueryTypes(query_engine, PDF_TYPE)
-                return f"PDF '{pdf_file_path_str}' (ID: {sane_pdf_id}) processed. Query engine ready."
+                self.query_engines[sane_item_id] = QueryTypes(query_engine, FILE_TYPE) # Use FILE_TYPE
+                return f"File '{file_path_str}' (ID: {sane_item_id}) processed. Query engine ready."
             else: # Should not be reached if logic is correct
-                return f"Error: Failed to load or create index for PDF '{pdf_file_path_str}' (ID: {sane_pdf_id})."
+                return f"Error: Failed to load or create index for file '{file_path_str}' (ID: {sane_item_id})."
 
         except Exception as e:
-            error_msg = f"Error processing PDF '{pdf_file_path_str}' (ID: {pdf_id}): {str(e)}"
+            error_msg = f"Error processing file '{file_path_str}' (ID: {item_id}): {str(e)}"
             if self.verbose:
                 print(f"--- [{self.name}] {error_msg} ---")
                 import traceback
