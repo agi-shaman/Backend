@@ -70,8 +70,6 @@ class RateLimitedGemini(Gemini):
     async def astream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseAsyncGen:
-        # Note: Retrying a generator might restart the entire generation.
-        # This is a limitation of applying retry at this level.
         return await super().astream_chat(messages, **kwargs)
 
     def __init__(self, *args, **kwargs):
