@@ -376,7 +376,7 @@ class Agent:
         def _schedule_task_tool_func(prompt: str, scheduled_time_iso: str) -> str:
             """schedules a task for later execution."""
             if self.verbose: print(f"--- [{self.name}] Tool 'schedule_task' called for task {str} ---")
-            return self._schedule_task_internally(recipient=recipient, subject=subject, body=body, attachment_paths=attachment_paths)
+            return self._schedule_task_internally(prompt, scheduled_time_iso)
 
         schedule_task_tool = FunctionTool.from_defaults(
             fn=_schedule_task_tool_func,

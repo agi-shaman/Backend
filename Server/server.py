@@ -133,7 +133,7 @@ class ApiServer:
         await asyncio.sleep(0.1)
         return "User responded: 'Blue is my favorite color'. (Placeholder from server)"
 
-    async def _schedule_new_prompt_tool(self, prompt: str, scheduled_time_iso: str) -> Dict[str, Any]:
+    async def _schedule_new_prompt_tool(self, prompt: str, scheduled_time_iso: str) -> str:
         """
         Tool for the AI Agent to schedule a new prompt for future execution.
         Args:
@@ -156,17 +156,17 @@ class ApiServer:
 
             task_id = str(uuid.uuid4())
             self._add_task_to_csv(task_id, prompt, scheduled_time_utc)  # Use existing CSV logic
-            return {
+            return str({
                 "status": "success",
                 "message": f"New prompt successfully scheduled for {scheduled_time_utc.isoformat()}.",
                 "task_id": task_id
-            }
+            })
         except ValueError as ve:  # Handles invalid ISO format
             print(f"[Server Tool Error] Invalid ISO format for scheduled_time_iso: {ve}")
-            return {"status": "error", "message": f"Invalid scheduled time format: {str(ve)}"}
+            return str({"status": "error", "message": f"Invalid scheduled time format: {str(ve)}"})
         except Exception as e:
             print(f"[Server Tool Error] Failed to schedule new prompt: {e}")
-            return {"status": "error", "message": f"Failed to schedule new prompt: {str(e)}"}
+            return str({"status": "error", "message": f"Failed to schedule new prompt: {str(e)}"})
 
     # --- CSV Helper Methods (identical to before) ---
     def _initialize_csv(self):
