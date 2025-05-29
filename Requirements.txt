@@ -1,3 +1,6 @@
 llama-index
 llama-index-llms-gemini
 python-dotenv
+llama-index-embeddings-gemini
+google-generativeai
+pypdf
