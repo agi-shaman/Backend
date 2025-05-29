@@ -3,14 +3,20 @@ from pathlib import Path
 # and the script is run as a module from the directory *above* 'scripts' and 'lib'.
 # Example: python -m scripts.agent_test
 # Adjust the import based on your actual project structure if this template doesn't match.
-try:
-    from ..lib import agent # If agent_test.py is in a subpackage like 'scripts'
-except ImportError:
-    # Fallback if run directly and lib is in PYTHONPATH or same dir (less common for packages)
-    from lib import agent
+from ..lib import agent 
 
 
 import asyncio
+from unittest.mock import patch, MagicMock
+
+# Add imports for Gmail API components needed for mocking
+# These might not be strictly necessary if we mock the build function directly,
+# but good to have for clarity or if mocking at a different level.
+# We'll mock the build function, so we primarily need MagicMock and patch.
+# from googleapiclient.discovery import build
+# from google.oauth2.credentials import Credentials as GoogleCredentials
+# from googleapiclient.errors import HttpError
+
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
@@ -63,10 +69,10 @@ async def run_agent():
         system_prompt=autonomous_system_prompt,
         verbose=True
     )
-    
+
     # The user task as provided in the problem description
-    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change)"
-    
+    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change), then send a gmail to eitankorh123@gmail.com with it in it, and with some message related to the file"
+
     print(f"\n--- [Test Script] Task for agent: {user_task} ---")
 
     # Determine CWD for context.
@@ -76,7 +82,7 @@ async def run_agent():
     # The user's path "Backend/test.pdf" from this CWD would mean ".../Backend/Backend/test.pdf".
     # The agent's `load_pdf_document` tool resolves `Path("Backend/test.pdf")`.
     # So, the dummy PDF needs to be at this location for the agent to find it.
-    
+
     cwd = Path.cwd()
     # Path for the dummy PDF as the agent will interpret "Backend/test.pdf" from the CWD
     # This assumes the CWD of the Python script is the 'Backend' directory mentioned in the shell prompt.
@@ -93,7 +99,6 @@ async def run_agent():
     print(f"\n--- [Test Script] Final Agent Response from run_agent: ---")
     print(response)
     print(f"--- [Test Script] End of Final Agent Response ---")
-
 
 if __name__ == "__main__":
     try:

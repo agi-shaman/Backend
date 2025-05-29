@@ -1,5 +1,5 @@
 import time
-
+from email import encoders
 from llama_index.core.agent.workflow import FunctionAgent
 import shutil
 from llama_index.core.node_parser import SentenceSplitter
@@ -16,9 +16,18 @@ from llama_index.core import (
     load_index_from_storage,
     Settings,
 )
+from .firebase import get_user_google_access_token
 from llama_index.readers.file import PyMuPDFReader
 import re 
 from datetime import datetime
+import base64
+from email.message import EmailMessage
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+import mimetypes
+from google.oauth2.credentials import Credentials as GoogleCredentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 try:
     from .pdf_writer_utility import create_styled_pdf_from_markdown
@@ -99,6 +108,7 @@ class Agent:
         self.pdf_persist_base_dir = Path(f"./{PDF_PERSIST_BASE_DIR_NAME}")
         self.pdf_persist_base_dir.mkdir(parents=True, exist_ok=True)
         self._pdf_settings_configured = False
+        self._email_settings_configured = False
         self.writing_output_dir = Path(f"./{WRITING_OUTPUT_BASE_DIR_NAME}")
         self.writing_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -116,7 +126,7 @@ class Agent:
             print(f"--- [{self.name}] Generated documents will be saved to: {self.writing_output_dir.resolve()} ---")
 
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=390000)
-        print(f"Initialized '{self.name}' with system prompt: '{system_prompt}' and {len(self.tools)} tools.")
+        print(f"Initialized '{self.name}' and {len(self.tools)} tools.")
 
     def _add_tools(self):
         """Helper method to create and add tools for the agent."""
@@ -281,6 +291,67 @@ class Agent:
         )
         self.tools.append(create_document_tool)
 
+        # --- Email Functionality Tools ---
+        # Note: These tools now signal if a Google Access Token is required.
+        # The agent's LLM should be prompted to use the get_cli_text_input tool
+        # to obtain the token from the user if the response indicates it's needed.
+        def _send_email_tool_func(recipient: str, subject: str, body: str, attachment_paths: str = "") -> str:
+            """Sends an email using the Gmail API."""
+            if self.verbose: print(f"--- [{self.name}] Tool 'send_email' called to {recipient} ---")
+            return self._send_email_internal(recipient=recipient, subject=subject, body=body, attachment_paths=attachment_paths)
+
+        send_email_tool = FunctionTool.from_defaults(
+            fn=_send_email_tool_func,
+            name="send_email",
+            description=(
+                "Sends an email to a specified recipient with a given subject and body. "
+                "Requires a valid Google access token for the user. "
+                "Required arguments: 'recipient' (string, the email address of the recipient), "
+                "'subject' (string, the subject line of the email), "
+                "'body' (string, the main content of the email). "
+                "Optional argument: 'attachment_paths' (string, a comma-separated string of file paths to attach, e.g., '/path/to/file1.pdf,/path/to/file2.txt'). "
+            )
+        )
+        self.tools.append(send_email_tool)
+
+        def _draft_email_tool_func(recipient: str, subject: str, body: str, attachment_paths: str = "") -> str:
+            """Creates an email draft using the Gmail API."""
+            if self.verbose: print(f"--- [{self.name}] Tool 'draft_email' called for {recipient} ---")
+            return self._draft_email_internal(recipient=recipient, subject=subject, body=body, attachment_paths=attachment_paths)
+
+        draft_email_tool = FunctionTool.from_defaults(
+            fn=_draft_email_tool_func,
+            name="draft_email",
+            description=(
+                "Creates an email draft for a specified recipient with a given subject and body. "
+                "Requires a valid Google access token for the user. "
+                "Required arguments: 'recipient' (string, the email address of the recipient), "
+                "'subject' (string, the subject line of the email), "
+                "'body' (string, the main content of the email). "
+                "Optional argument: 'attachment_paths' (string, a comma-separated string of file paths to attach, e.g., '/path/to/file1.pdf,/path/to/file2.txt'). "
+            )
+        )
+        self.tools.append(draft_email_tool)
+
+        # --- CLI Input Tool ---
+        cli_input_tool = FunctionTool.from_defaults(
+            fn=self._get_text_input_tool_func,
+            name="get_text_input",
+            description=(
+                "Prompts the user via the command line for additional text input. "
+                "Use this tool when you need more information from the user to complete a task. "
+                "Required argument: 'prompt' what info do you need?."
+                "Returns a string containing the user's input"
+            )
+        )
+        self.tools.append(cli_input_tool)
+
+    def _get_text_input_tool_func(self, prompt: str) -> str:
+        print("\n--- Agent requires additional information ---")
+        additional_input = input(prompt)
+        print("-------------------------------------------\n")
+        return f"The user responded to the prompt '{prompt}' with: '{additional_input}'."
+
     def _create_document_from_description_internal(self, document_description: str, requested_filename: str) -> str:
         """
         Internal method to handle document creation.
@@ -373,6 +444,82 @@ class Agent:
                 traceback.print_exc()
             return error_msg
 
+    def _get_gmail_service(self):
+        """Initializes and returns a Gmail API service object."""
+        if not get_user_google_access_token():
+            return "Error: Google access token is required to initialize Gmail service."
+
+        creds = GoogleCredentials(token=get_user_google_access_token())
+        try:
+            # cache_discovery=False is important for performance and avoiding discovery doc download issues
+            service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
+            if self.verbose:
+                print(f"--- [{self.name}] Gmail API service initialized for user. ---")
+            return service
+        except Exception as e:
+            error_msg = f"Failed to build Gmail service: {e}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+            return error_msg # Return error message instead of raising
+
+    def _create_gmail_message_body(self, to_email: str, subject: str, message_text: str) -> dict:
+        """Creates a Gmail API-compatible message body (base64url encoded) using EmailMessage."""
+        message = EmailMessage()
+        message.set_content(message_text)  # For plain text content
+        message['To'] = to_email
+        message['Subject'] = subject
+        # 'From' will be set by Gmail API based on authenticated user (userId='me')
+
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        return {'raw': raw_message}
+
+    def _create_message_with_attachment(self, to_email: str, subject: str, message_text: str, attachment_paths) -> dict:
+        """Creates a Gmail API-compatible message body with optional attachments."""
+        message = MIMEMultipart('mixed')
+        message['To'] = to_email
+        message['Subject'] = subject
+        # 'From' will be set by Gmail API based on authenticated user (userId='me')
+
+        # Attach the plain text body
+        text_part = EmailMessage()
+        text_part.set_content(message_text)
+        message.attach(text_part)
+
+        if attachment_paths != []:
+            for file_path in attachment_paths:
+                if file_path is None:
+                    return {"raw":f"file '{file_path}' does not found"}
+                if not os.path.exists(file_path):
+                    if self.verbose:
+                        print(f"--- [{self.name}] Warning: Attachment file not found: {file_path} ---")
+                    continue # Skip this attachment if file not found
+
+                try:
+                    content_type, encoding = mimetypes.guess_type(file_path)
+                    if content_type is None or encoding is not None:
+                        content_type = 'application/octet-stream' # Default to binary if type is unknown or encoded
+
+                    maintype, subtype = content_type.split('/', 1)
+
+                    with open(file_path, 'rb') as f:
+                        file_content = f.read()
+
+                    part = MIMEBase(maintype, subtype)
+                    part.set_payload(file_content)
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(file_path)}"')
+                    message.attach(part)
+                    if self.verbose:
+                        print(f"--- [{self.name}] Attached file: {os.path.basename(file_path)} ---")
+
+                except Exception as e:
+                    if self.verbose:
+                        print(f"--- [{self.name}] Error attaching file {file_path}: {e} ---")
+                    continue # Continue with other attachments
+
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        return {'raw': raw_message}
+
     def ListSubAgents(self) -> str:
         """Lists the names of all created sub-agents."""
         return str(list(self.SubWorkers.keys()))
@@ -407,6 +554,94 @@ class Agent:
             msg = f"Error creating sub-agent '{name}': {str(e)}"
             print(msg)
             return msg
+
+    def _send_email_internal(self, recipient: str, subject: str, body: str, attachment_paths: str = "") -> str:
+        """
+        Internal method to send an email using the Gmail API with optional attachments.
+        Signals if Google Access Token is missing.
+        Accepts attachment_paths as a comma-separated string.
+        """
+        if self.verbose:
+            print(f"--- [{self.name}] Attempting to send email to: {recipient} with attachments string: {attachment_paths} ---")
+
+        service = self._get_gmail_service()
+        if isinstance(service, str): # Check if _get_gmail_service returned an error message
+            return service # Return the error message
+
+        try:
+            # Split the comma-separated string into a list of paths
+            paths_list = [p.strip() for p in attachment_paths.split(',') if p.strip()] if attachment_paths else None
+
+            # Use the new function that handles attachments
+            message_payload = self._create_message_with_attachment(
+                to_email=recipient,
+                subject=subject,
+                message_text=body,
+                attachment_paths=paths_list # Pass the list to the message creation function
+            )
+            sent_message = service.users().messages().send(userId='me', body=message_payload).execute()
+            msg_id = sent_message.get('id', 'N/A')
+            msg = f"Email sent successfully to {recipient}. Message ID: {msg_id}"
+            if self.verbose:
+                print(f"--- [{self.name}] {msg} ---")
+            return msg
+        except HttpError as error:
+            error_msg = f"An API error occurred while sending email to {recipient}: {error.resp.status} - {error._get_reason()}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+                # Optional: Log more details from error.content if needed, but avoid logging sensitive info
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error sending email to {recipient}: {str(e)}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+                import traceback
+                traceback.print_exc()
+            return error_msg
+
+    def _draft_email_internal(self, recipient: str, subject: str, body: str, attachment_paths: str = "") -> str:
+        """
+        Internal method to create an email draft using the Gmail API with optional attachments.
+        Accepts attachment_paths as a comma-separated string.
+        """
+        if self.verbose:
+            print(f"--- [{self.name}] Attempting to draft email to: {recipient} with attachments string: {attachment_paths} ---")
+
+        service = self._get_gmail_service()
+        if isinstance(service, str): # Check if _get_gmail_service returned an error message
+            return service # Return the error message
+
+        try:
+            # Split the comma-separated string into a list of paths
+            paths_list = [p.strip() for p in attachment_paths.split(',') if p.strip()] if attachment_paths else None
+
+            # Use the new function that handles attachments
+            message_payload = self._create_message_with_attachment(
+                to_email=recipient,
+                subject=subject,
+                message_text=body,
+                attachment_paths=paths_list # Pass the list to the message creation function
+            )
+            draft_body = {'message': message_payload}
+            created_draft = service.users().drafts().create(userId='me', body=draft_body).execute()
+            draft_id = created_draft.get('id', 'N/A')
+            msg = f"Draft created successfully for {recipient}. Draft ID: {draft_id}"
+            if self.verbose:
+                print(f"--- [{self.name}] {msg} ---")
+            return msg
+        except HttpError as error:
+            error_msg = f"An API error occurred while creating draft for {recipient}: {error.resp.status} - {error._get_reason()}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+                # Optional: Log more details from error.content if needed
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error creating draft for {recipient}: {str(e)}"
+            if self.verbose:
+                print(f"--- [{self.name}] {error_msg} ---")
+                import traceback
+                traceback.print_exc()
+            return error_msg
 
     async def CallSubAgent(self, name: str, task: str) -> str:
         """
