@@ -80,6 +80,7 @@ CONTENT REQUIREMENTS:
 2.  **Density and Efficiency:** The document must be as compact and information-dense as possible while remaining perfectly readable and comprehensive. Your goal is to convey all necessary information in the fewest possible words and pages. Prioritize impactful information over lengthy explanations.
 3.  **Professional Tone:** Maintain a highly formal, objective, and polished tone throughout the entire document.
 4.  **Completeness:** Ensure the document is self-contained and thoroughly covers the requested topic from introduction to conclusion, as appropriate for the document type.
+5.  **Handle Autonomous Fillings:** The input text may contain sections marked like `[AI AUTONOMOUSLY FILLED: Some generated text]`. When you encounter this pattern, render *only* the text inside the brackets (`Some generated text`) in the final markdown output, replacing the original placeholder text entirely. Do NOT include the `[AI AUTONOMOUSLY FILLED: ]` part in the output markdown.
 
 USER'S DOCUMENT REQUEST: "{user_document_request}"
 
