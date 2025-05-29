@@ -9,3 +9,5 @@ pymupdf
 llama-index-readers-file
 llama-index-readers-web
 googlesearch-python
+reportlab
+llama-index-readers-web
