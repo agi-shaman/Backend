@@ -15,7 +15,7 @@ def retry_gemini_api_call(func):
     Decorator to apply retry logic with exponential backoff to Gemini API calls.
     """
     @tenacity.retry(
-        wait=tenacity.wait_exponential(multiplier=1, min=10, max=60),
+        wait=tenacity.wait_exponential(multiplier=1, min=10, max=300),
         stop=tenacity.stop_after_attempt(5),
         retry=tenacity.retry_if_exception_type(RETRY_EXCEPTIONS),
         before_sleep=lambda retry_state: print(
