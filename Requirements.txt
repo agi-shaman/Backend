@@ -1,3 +1,9 @@
 llama-index
 llama-index-llms-gemini
 python-dotenv
+llama-index-embeddings-gemini
+google-generativeai
+pypdf
+dotenv
+pip install pymupdf
+llama-index-readers-file
