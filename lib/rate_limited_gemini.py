@@ -66,25 +66,11 @@ class RateLimitedGemini(Gemini):
         # This is a limitation of applying retry at this level.
         return super().stream_chat(messages, **kwargs)
 
+    @retry_gemini_api_call
     async def astream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseAsyncGen:
-        # Implement retry logic for the async generator iteration
-        retrier = tenacity.Retrying(
-            wait=tenacity.wait_exponential(multiplier=2, min=10, max=300),
-            retry=tenacity.retry_if_exception_type(RETRY_EXCEPTIONS),
-            before_sleep=lambda retry_state: print(
-                f"Retrying astream_chat iteration after {{retry_state.seconds_since_start:.2f}}s, "
-                f"attempt {{retry_state.attempt_number}} failed with {{retry_state.outcome.exception()}}"
-            )
-        )
-        async for attempt in retrier:
-            with attempt:
-                # This block will be retried
-                async_generator = await super().astream_chat(messages, **kwargs)
-                async for chunk in async_generator:
-                    yield chunk
-                # If the loop finishes without exception, the attempt is successful
+        return await super().astream_chat(messages, **kwargs)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
