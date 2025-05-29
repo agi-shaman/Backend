@@ -34,6 +34,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import traceback # Ensure traceback is imported for error logging
 
+
 try:
     from .pdf_writer_utility import create_styled_pdf_from_markdown
 except ImportError:
@@ -167,8 +168,9 @@ Remember: Begin your response *immediately* with the H1 markdown title.
 """
 
 class Agent:
-    def __init__(self, system_prompt: str = autonomous_system_prompt, name: str = "Main_Agent", verbose: bool = False):
+    def __init__(self, server, system_prompt: str = autonomous_system_prompt, name: str = "Main_Agent", verbose: bool = False):
         self.name = name
+        self.server = server
         self.tools = []
         self.verbose = verbose
         self.SubWorkers = {}
@@ -440,7 +442,7 @@ class Agent:
         self.tools.append(cli_input_tool)
 
     def _get_text_input_tool_func(self, prompt: str) -> str:
-        additional_input = input(prompt)
+        additional_input = self.server.wait_for_input(prompt)
         print("-------------------------------------------\n")
         return f"The user responded to the prompt '{prompt}' with: '{additional_input}'."
 
