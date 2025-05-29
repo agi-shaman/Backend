@@ -11,3 +11,5 @@ llama-index-readers-web
 googlesearch-python
 reportlab
 llama-index-readers-web
+webdriver-manager
+selenium
