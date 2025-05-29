@@ -1,46 +1,105 @@
 from pathlib import Path
-from ..lib import agent
+# Assuming 'agent' is in 'lib' and 'agent_test.py' is in 'scripts',
+# and the script is run as a module from the directory *above* 'scripts' and 'lib'.
+# Example: python -m scripts.agent_test
+# Adjust the import based on your actual project structure if this template doesn't match.
+try:
+    from ..lib import agent # If agent_test.py is in a subpackage like 'scripts'
+except ImportError:
+    # Fallback if run directly and lib is in PYTHONPATH or same dir (less common for packages)
+    from lib import agent
+
+
 import asyncio
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
-    enhanced_system_prompt = (
-        "You are a helpful assistant with advanced capabilities, including managing sub-agents "
-        "and processing PDF documents. You can load PDFs, list them, and query their content. "
-        "When asked about a PDF, first ensure it's loaded using its file path and a chosen ID. "
-        "Then, use that ID to query the PDF.\n\n"
-        "If a user asks to modify, edit, or fill in an existing PDF:\n"
-        "1. Clearly state that you cannot directly edit or alter PDF files, as this is beyond your current tool capabilities for existing files.\n"
-        "2. Propose a constructive workaround: Offer to create a *new* PDF document that incorporates the content of the original PDF along with the user's desired changes or filled-in information.\n"
-        "3. Explain the general process you would follow:\n"
-        "   a. You will first need to load the original PDF (e.g., `Backend/test.pdf`) using your `load_pdf_document` tool to access its content.\n"
-        "   b. Then, you will need to understand its content. This might involve you querying the PDF for its text or structure. You may need to ask the user for key information about the original document or to provide specific text segments.\n"
-        "   c. Crucially, you must ask the user for the specific information they want to fill in or change. This includes identifying the 'placeholders' (e.g., specific text like `[NAME]`, `_________`, or sections to be updated) and the new content for each.\n"
-        "   d. After gathering all necessary information (original content to be preserved, user's new data, and clear instructions on where changes go), you will use your `create_document_from_description` tool. The 'document_description' you formulate for this tool should be a comprehensive instruction set for generating the *new* document, effectively telling the writer AI how to construct the new PDF with the original structure and the new information integrated.\n"
-        "Remember to emphasize that this process results in a brand new PDF document, generated based on markdown content. While you aim for professional formatting, the layout and appearance of the new PDF might differ from the original PDF. You are not 'copying' or 'editing' the original file itself."
+
+    autonomous_system_prompt = (
+        "You are a highly autonomous assistant skilled in PDF processing. You can load PDFs, query their content, and generate new documents. "
+        "Your primary goal is to complete tasks without asking for clarification, making reasonable assumptions where necessary.\n\n"
+        "**FILE PATHS:**\n"
+        "When a user provides a file path like 'Dir/file.pdf' or 'file.pdf', use that path directly with your tools. "
+        "Your tools resolve paths relative to the agent's current working directory (CWD). "
+        "For example, if the user says 'load Backend/test.pdf' and your CWD is '/home/dev/Projects/MyProject', your tools will look for '/home/dev/Projects/MyProject/Backend/test.pdf'. "
+        "If the user says 'load test.pdf' and your CWD is '/home/dev/Projects/Backend', tools will look for '/home/dev/Projects/Backend/test.pdf'. "
+        "Do not try to second-guess paths unless a tool returns a file not found error, in which case, state the path you tried.\n\n"
+        "**TASK: AUTONOMOUS PDF MODIFICATION (CREATING A NEW PDF)**\n"
+        "If a user asks to 'fill in placeholders', 'modify', 'edit', or 'copy and change fields' in an existing PDF, you MUST follow this autonomous procedure to create a NEW PDF. You CANNOT edit existing PDF files directly.\n"
+        "1.  **Acknowledge & Plan (Briefly):** State that you will autonomously process the PDF as requested and create a new one.\n"
+        "2.  **Load PDF:** Use the `load_pdf_document` tool. Provide the `pdf_file_path` exactly as given by the user. Assign a unique `pdf_id` yourself (e.g., 'original_doc_auto_process').\n"
+        "3.  **Extract Full Text:** Use the `query_pdf_document` tool on the loaded PDF. Your `query_text` must be: 'Extract all text content from this document. Try to preserve line breaks and general structure if possible in the text output.' The quality of this extraction is critical for placeholder identification.\n"
+        "4.  **Identify Placeholders (Best Effort):** Analyze the extracted text content. You are looking for common placeholder patterns. Examples to look for:\n"
+        "    *   Sequences of 3 or more underscores (e.g., `___`, `__________`).\n"
+        "    *   Bracketed terms using square `[]` or curly `{{}}` braces (e.g., `[PLACEHOLDER_TEXT]`, `{{FIELD_NAME}}`).\n"
+        "    *   Keywords like 'Name:', 'Date:', 'Signature:' if they are immediately followed by underscores or appear to denote an empty field based on context (this is harder; prioritize explicit markers like underscores and brackets).\n"
+        "    *   If no clear placeholders are found, proceed with the original text, but note this in your internal thought process for generating the new document.\n"
+        "5.  **Substitute Placeholders with Generic Fillings:** For each part of the text you identify as a placeholder, replace it *in your copy of the extracted text content* with a generic, clearly marked substitute. Examples of substitutions:\n"
+        "    *   `__________` could become `[AI AUTONOMOUSLY FILLED: Sample Data]`\n"
+        "    *   `[DATE_TO_BE_FILLED_BY_AI]` could become `[AI AUTONOMOUSLY FILLED: YYYY-MM-DD (Example Date)]`\n"
+        "    *   `{{USER_INPUT_REQUIRED_HERE}}` could become `[AI AUTONOMOUSLY FILLED: Example User Input Text]`\n"
+        "    The goal is to demonstrate an attempt to fill, not to provide semantically meaningful data.\n"
+        "6.  **Construct New Document Description:** The *entire modified text content* (i.e., the original text with your substitutions made) becomes the 'document_description' for creating the new PDF.\n"
+        "7.  **Create New PDF:** Use the `create_document_from_description` tool. For the `requested_filename` argument, derive a name from the original, like `originalFilename_filled_autonomously` (e.g., if original was `test.pdf`, use `test_filled_autonomously`).\n"
+        "8.  **Report Outcome:** Your final response to the user must confirm task completion. State the path to the NEWLY created PDF. Briefly mention that placeholders were identified (or an attempt was made) and filled autonomously using generic data. Do NOT ask for user confirmation at any step; execute the entire process autonomously.\n\n"
+        "**Output Expectations:**\n"
+        "The new PDF will be generated from markdown. Its formatting and layout will likely differ significantly from the original PDF. This is an expected outcome of creating a new document based on extracted and modified text, rather than direct editing."
     )
 
-    my_agent = agent.Agent(system_prompt=enhanced_system_prompt,verbose=True)
+    my_agent = agent.Agent(
+        system_prompt=autonomous_system_prompt,
+        verbose=True
+    )
     
-
-    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change)"
-
+    # The user task as provided in the problem description
     user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change)"
     
-    print(f"--- [Main_Agent] Task for agent: {user_task} ---")
+    print(f"\n--- [Test Script] Task for agent: {user_task} ---")
+
+    # Determine CWD for context.
+    # The problem log `(.venv) [dev@archlinux Backend]$ ./run.sh` implies CWD for `run.sh` is `.../Backend`.
+    # If `run.sh` executes `python ../scripts/agent_test.py` (or similar, maintaining CWD),
+    # then `Path.cwd()` in this script will be `.../Backend`.
+    # The user's path "Backend/test.pdf" from this CWD would mean ".../Backend/Backend/test.pdf".
+    # The agent's `load_pdf_document` tool resolves `Path("Backend/test.pdf")`.
+    # So, the dummy PDF needs to be at this location for the agent to find it.
+    
+    cwd = Path.cwd()
+    # Path for the dummy PDF as the agent will interpret "Backend/test.pdf" from the CWD
+    # This assumes the CWD of the Python script is the 'Backend' directory mentioned in the shell prompt.
+    # If the script is run from a project root, and 'Backend' is a subdir, this path will be ProjectRoot/Backend/test.pdf
+    # The system prompt tells the LLM to use "Backend/test.pdf" literally.
+    # So if CWD is /abs/path/to/ProjectRoot, tool will try to load /abs/path/to/ProjectRoot/Backend/test.pdf
+    # This matches the dummy PDF creation path below.
+    dummy_pdf_relative_path = "Backend/test.pdf"
+    dummy_pdf_full_path = cwd / dummy_pdf_relative_path
+
+    print(f"--- [Test Script] Ensuring dummy PDF exists at: {dummy_pdf_full_path.resolve()} (relative to CWD: {cwd}) ---")
+
     response = await my_agent.run(user_task)
-    print(f"Agent Response: {response}")
+    print(f"\n--- [Test Script] Final Agent Response from run_agent: ---")
+    print(response)
+    print(f"--- [Test Script] End of Final Agent Response ---")
+
 
 if __name__ == "__main__":
     try:
        asyncio.run(run_agent())
     except ImportError as e:
-        print(f"ImportError: {e}")
-        print("This script seems to be part of a package. "
-              "Try running it as a module from the directory *above* your package.")
-        print("For example, if your script is in 'my_package/scripts/this_script.py' "
-              "and 'lib' is 'my_package/lib', run from the directory containing 'my_package':")
-        print("  python -m my_package.scripts.this_script")
-        print("Or, adjust your PYTHONPATH if 'lib' is not found.")
+        if "attempted relative import with no known parent package" in str(e) or ".." in str(e):
+            print(f"ImportError: {e}")
+            print("This script might be run directly instead of as a module, or the package structure is not standard.")
+            print("Try running it as a module from the directory *above* 'scripts' (e.g., your project root).")
+            print("Example: If structure is ProjectRoot/scripts/agent_test.py and ProjectRoot/lib/agent.py:")
+            print("  cd ProjectRoot")
+            print("  python -m scripts.agent_test")
+            print("Ensure 'lib' directory is correctly recognized as a package (e.g. has __init__.py if needed).")
+        else:
+            print(f"An other ImportError occurred: {e}")
+        import traceback
+        traceback.print_exc()
+
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+        import traceback
+        traceback.print_exc()
