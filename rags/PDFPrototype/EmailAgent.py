@@ -69,6 +69,7 @@ def firebase_auth_required(f):
             decoded_token = auth.verify_id_token(id_token)
             request.user = decoded_token
             request.google_access_token = access_token
+            print(access_token)
             logger.info(f"User {decoded_token.get('email')} authenticated.")
         except firebase_admin.auth.InvalidIdTokenError as e:
             logger.error(f"Invalid Firebase ID token: {e}")
@@ -86,7 +87,7 @@ def get_gmail_service(user_google_access_token: str):
     """Initializes and returns a Gmail API service object."""
     if not user_google_access_token:
         raise ValueError("Google access token is required to initialize Gmail service.")
-
+    print(f"token --- {user_google_access_token}")
     creds = GoogleCredentials(token=user_google_access_token)
     try:
         service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
