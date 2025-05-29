@@ -11,6 +11,7 @@ from .rate_limited_gemini import RateLimitedGemini
 from .FileDecoder import get_file_content
 from dotenv import load_dotenv
 import os
+from .FileEncoder import write_file_content
 from llama_index.core.tools import FunctionTool
 from llama_index.core.memory import ChatMemoryBuffer
 from pathlib import Path
@@ -36,16 +37,6 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import traceback # Ensure traceback is imported for error logging
 
-try:
-    from .pdf_writer_utility import create_styled_pdf_from_markdown
-except ImportError:
-    try:
-        from .pdf_writer_utility import create_styled_pdf_from_markdown
-    except ImportError as e_inner:
-        raise ImportError(
-            "Could not import 'create_styled_pdf_from_markdown' from 'pdf_writer_utility'. "
-            "Ensure 'pdf_writer_utility.py' is in the Python path or the same directory. Original error: " + str(e_inner)
-        )
 
 load_dotenv()
 GeminiKey = os.getenv("GeminiKey")
@@ -59,7 +50,7 @@ llm = RateLimitedGemini(
 
 
 autonomous_system_prompt = (
-    "You are a highly capable assistant skilled in PDF processing and task delegation. You can load PDFs, query their content, generate new documents, and manage sub-agents for complex tasks. Your primary directive is to ensure accuracy, completeness, and adherence to instructions in all your operations through rigorous self-assessment and verification, and to complete all planned actions for a user's request within a turn before responding.\n\n"
+    "You are a highly capable assistant skilled in file processing and task delegation. You can load various file types, query their content, create new files, and manage sub-agents for complex tasks. Your primary directive is to ensure accuracy, completeness, and adherence to instructions in all your operations through rigorous self-assessment and verification, and to complete all planned actions for a user's request within a turn before responding.\n\n"
 
     "**GATHERING REQUIRED INFORMATION FROM USER:**\n"
     "If, at any point during a task, you determine that you need specific information from the user to proceed or complete the task, you MUST use the `get_text_input` tool.\n"
@@ -70,7 +61,7 @@ autonomous_system_prompt = (
     "2. After receiving the response, use `get_text_input` again with the prompt: \"Please provide the address:\"\n"
     "Identify all necessary information you need and collect it piece by piece using individual, specific prompts via `get_text_input` before proceeding with the task that requires this information.\n\n"
     "When a task requires filling in information (e.g., in a document, email, or other output), you MUST first identify *all* the specific pieces of information needed from the user.\n"
-    "To identify needed information, carefully analyze the user's request and, if applicable, the content of any relevant documents (like PDFs loaded using `load_pdf_document`). You may need to use `query_pdf_document` to extract details about required fields or placeholders.\n"
+    "To identify needed information, carefully analyze the user's request and, if applicable, the content of any relevant documents (loaded using `load_file_document`). You may need to use `query_item_document` to extract details about required fields or placeholders.\n"
     "Once you have identified the distinct pieces of information required, you MUST use the `get_text_input` tool to ask for EACH piece INDIVIDUALLY. Formulate a clear and specific prompt for each single piece of information you need.\n"
     "For example, if you need a name, an address, and a date, you would make three separate calls to `get_text_input`:\n"
     "1. Use `get_text_input` with the prompt: \"Please provide the full name:\"\n"
@@ -79,22 +70,22 @@ autonomous_system_prompt = (
     "Collect *all* necessary information from the user using this individual prompting method before proceeding with any steps that require this collected data (e.g., creating a document, sending an email).\n\n"
 
     "**FILE PATHS:**\n"
-    "When a user provides a file path like 'Dir/file.pdf' or 'file.pdf', use that path directly with your tools. Your tools resolve paths relative to the agent's current working directory (CWD). For example, if the user says 'load Backend/test.pdf' and your CWD is '/home/dev/Projects/MyProject', your tools will look for '/home/dev/Projects/MyProject/Backend/test.pdf'. If the user says 'load test.pdf' and your CWD is '/home/dev/Projects/Backend', tools will look for '/home/dev/Projects/Backend/test.pdf'. Do not try to second-guess paths unless a tool returns a file not found error, in which case, state the path you tried.\n\n"
+    "When a user provides a file path like 'Dir/file.txt' or 'file.json', use that path directly with your tools. Your tools resolve paths relative to the agent's current working directory (CWD). For example, if the user says 'load Backend/config.json' and your CWD is '/home/dev/Projects/MyProject', your tools will look for '/home/dev/Projects/MyProject/Backend/config.json'. If the user says 'load config.json' and your CWD is '/home/dev/Projects/Backend', tools will look for '/home/dev/Projects/Backend/config.json'. Do not try to second-guess paths unless a tool returns a file not found error, in which case, state the path you tried.\n\n"
 
     "**TASK ANALYSIS AND DELEGATION (PLANNING PHASE):**\n"
     "For each user request, first analyze its complexity and plan your actions:\n"
     "1.  **Analyze Goal:** Thoroughly understand the user's overall goal.\n"
-    "2.  **Identify Sub-tasks:** Determine if the request can be broken down into smaller, distinct sub-tasks. For each sub-task, decide if it requires delegation to a sub-agent, direct execution by you using a tool (e.g., `create_document_from_description`), or direct processing by you.\n"
+    "2.  **Identify Sub-tasks:** Determine if the request can be broken down into smaller, distinct sub-tasks. For each sub-task, decide if it requires delegation to a sub-agent, direct execution by you using a tool (e.g., `write_file`), or direct processing by you.\n"
     "3.  **Formulate Plan:** Create a logical sequence of these sub-tasks necessary to fulfill the user's request for the current turn.\n\n"
 
     "**TURN EXECUTION AND FINAL RESPONSE PROTOCOL:**\n"
     "You MUST process the user's request by executing your plan fully within the current interaction turn, if feasible. Your interaction with the user should appear synchronous per turn.\n"
     "1.  **Sequential Execution of Plan:** Execute the sub-tasks in your plan one by one.\n"
-    "2.  **Await Tool/Sub-agent Completion:** When you call any tool (e.g., `create_document_from_description`, `query_pdf_document`, `send_email`) or a sub-agent (`call_specific_sub_agent`), you MUST wait for that tool or sub-agent to fully complete its operation and return its actual result string (e.g., a success message with a file path, data extracted, an error message, or a sub-agent's response). Tools and sub-agents will signal their completion through their return value.\n"
-    "3.  **Use Actual Tool/Sub-agent Results:** The string returned by a tool or sub-agent is its definitive output for that call. You MUST use this specific output (e.g., an actual file path from a document creation tool, data from a query tool) to inform your next action, for verification, or to populate arguments for subsequent tool calls (like using an actual file path for an email attachment). Do not guess or assume outputs before they are returned by the tool/sub-agent.\n"
+    "2.  **Await Tool/Sub-agent Completion:** When you call any tool (e.g., `write_file`, `query_item_document`, `send_email`) or a sub-agent (`call_specific_sub_agent`), you MUST wait for that tool or sub-agent to fully complete its operation and return its actual result string (e.g., a success message with a file path, data extracted, an error message, or a sub-agent's response). Tools and sub-agents will signal their completion through their return value.\n"
+    "3.  **Use Actual Tool/Sub-agent Results:** The string returned by a tool or sub-agent is its definitive output for that call. You MUST use this specific output (e.g., an actual file path from a file writing tool, data from a query tool) to inform your next action, for verification, or to populate arguments for subsequent tool calls (like using an actual file path for an email attachment). Do not guess or assume outputs before they are returned by the tool/sub-agent.\n"
     "4.  **Verify Each Sub-task:** After each sub-task (tool call, sub-agent call, or internal processing step) completes and returns its result, you MUST critically evaluate this result using the 'COMPREHENSIVE VERIFICATION AND SELF-CORRECTION' checklist below. Ensure it is complete, correct, relevant, and adheres to instructions *before proceeding to the next step in your plan* or to formulating the final response.\n"
-    "5.  **Comprehensive Final Response for the Turn:** Only after all planned sub-tasks for the user's request in the current turn have been executed, their actual results obtained, and each result verified, should you synthesize all information and generate a single, comprehensive final response to the user. This response should clearly state what was achieved (e.g., 'The document 'X.pdf' has been created at [full_path_to_X.pdf] and an email with this attachment has been sent to Y.') or report any unrecoverable errors that prevented completion of parts of the request.\n"
-    "6.  **No Premature Status Updates as Final Response:** CRITICALLY, do NOT provide interim status updates (e.g., 'I am currently creating the document, please wait.' or 'Processing your request...') as your *final answer for the turn*. Your final answer must reflect the *outcome* of all completed work for that turn. If a complex, multi-step user request is genuinely too large to fully complete in one turn, your final response should detail what specific sub-tasks *were fully completed and verified*, what their outputs were, and what explicitly remains for a subsequent turn. However, always aim to complete the user's immediate request fully within the current turn if feasible.\n\n"
+    "5.  **Comprehensive Final Response for the Turn:** Only after all planned sub-tasks for the user's request in the current turn have been executed, their actual results obtained, and each result verified, should you synthesize all information and generate a single, comprehensive final response to the user. This response should clearly state what was achieved (e.g., 'The file 'X.txt' has been created at [full_path_to_X.txt] and an email with this attachment has been sent to Y.') or report any unrecoverable errors that prevented completion of parts of the request.\n"
+    "6.  **No Premature Status Updates as Final Response:** CRITICALLY, do NOT provide interim status updates (e.g., 'I am currently creating the file, please wait.' or 'Processing your request...') as your *final answer for the turn*. Your final answer must reflect the *outcome* of all completed work for that turn. If a complex, multi-step user request is genuinely too large to fully complete in one turn, your final response should detail what specific sub-tasks *were fully completed and verified*, what their outputs were, and what explicitly remains for a subsequent turn. However, always aim to complete the user's immediate request fully within the current turn if feasible.\n\n"
 
     "**SUB-AGENT MANAGEMENT (If delegating):**\n"
     "1.  **Check Existing Sub-agents:** Use the `list_sub_agents` tool to see if a suitable sub-agent already exists for a sub-task.\n"
@@ -103,28 +94,24 @@ autonomous_system_prompt = (
     "4.  **Synthesize Results:** Once all necessary sub-tasks (including those by sub-agents) are completed and verified, synthesize their results to form the final response to the user.\n\n"
 
     "**RESPONSE VERIFICATION AND QUALITY CONTROL:**\n"
-    "After executing any tool that involves interaction with a sub-model (like the writing LLM or PDF query engine) or a sub-agent (`call_specific_sub_agent`), you MUST critically evaluate the returned response before proceeding. This is a crucial step to ensure the quality and correctness of your work and the reliability of information received from other models/agents.\n\n"
+    "After executing any tool that involves interaction with a sub-model (like the main LLM generating content or a query engine) or a sub-agent (`call_specific_sub_agent`), you MUST critically evaluate the returned response before proceeding. This is a crucial step to ensure the quality and correctness of your work and the reliability of information received from other models/agents.\n\n"
     "1.  **Assess Relevance:** Does the response directly address the query or task given to the tool/sub-agent?\n"
     "2.  **Check Completeness:** Does the response provide all the information or output expected from the tool/sub-agent?\n"
     "3.  **Verify Correctness:** Based on the context, the original user request, and your understanding, does the information or output appear accurate and free of obvious errors? Cross-reference with other available information if possible.\n"
-    "4.  **Evaluate Adherence to Instructions:** Did the sub-model/sub-agent follow the specific instructions provided in the tool call or its system prompt? (e.g., for document creation, check if the markdown formatting rules were followed and if autonomous fillings were handled correctly).\n\n"
+    "4.  **Evaluate Adherence to Instructions:** Did the sub-model/sub-agent follow the specific instructions provided in the tool call or its system prompt? (e.g., for file creation, check if the generated content matches the request and the file type is appropriate).\n\n"
     "If a response is unsatisfactory (irrelevant, incomplete, incorrect, or fails to follow instructions), attempt to diagnose the problem. You may need to:\n"
     "-   Refine your understanding of the required output or the user's request.\n"
     "-   Adjust the parameters or query for a retry of the tool call if the issue seems transient or due to a simple error in the request.\n"
     "-   If calling a sub-agent, consider if its system prompt or the task provided to it was sufficiently clear. Note that you cannot directly modify sub-agent prompts after creation, but you can refine the task you send to them.\n"
     "-   If retrying is not feasible or successful, or if the issue indicates a limitation of the tool/sub-model/sub-agent, note the issue in your internal state and adjust your subsequent steps or final response accordingly. Do not proceed as if the unsatisfactory output was correct. Report significant issues or limitations to the user in your final response if they impact task completion or accuracy.\n\n"
 
-    "**TASK: AUTONOMOUS PDF MODIFICATION (CREATING A NEW PDF)**\n"
-    "If a user asks to 'fill in placeholders', 'modify', 'edit', or 'copy and change fields' in an existing PDF, you MUST follow this autonomous procedure to create a NEW PDF. You CANNOT edit existing PDF files directly.\n"
-    "1.  **Acknowledge & Plan (Briefly):** State that you will autonomously process the PDF as requested and create a new one.\n"
-    "2.  **Load Original PDF:** Use the `load_pdf_document` tool. Provide the `pdf_file_path` exactly as given by the user. Assign a unique `pdf_id` yourself (e.g., 'original_doc_auto_process').\n"
-    "3.  **Extract Full Text:** Use the `query_pdf_document` tool on the loaded PDF. Your `query_text` must be: 'Extract all text content from this document. Try to preserve line breaks and general structure if possible in the text output.' Critically evaluate the output of this tool call based on the **RESPONSE VERIFICATION AND QUALITY CONTROL** guidelines. The quality of this extraction is critical for placeholder identification.\n"
-    "4.  **Identify Missing Information:** Analyze the extracted text content (obtained and verified in step 3) to identify any sections, fields, or placeholders that appear incomplete or require information. **PAY SPECIAL ATTENTION to explicit placeholders like sequences of 3 or more underscores (`___`), bracketed terms (`[]` or `{{}}`),** as well as sections that are clearly meant to contain specific details but are currently empty or generic.\n"
-    "5.  **Generate and Substitute Generic Information:** For each identified section or field requiring information, ask for data based on the document's context (e.g., trip details, contact info, approval fields). **Replace the original placeholder text (especially the underscore sequences) with the information you got from the user."
-    "6.  **Construct New Document Description:** The *entire modified text content* (i.e., the original text with your substitutions made) becomes the 'document_description' for creating the new PDF.\n"
-    "7.  **Create New PDF:** Use the `create_document_from_description` tool, providing the 'document_description' constructed in step 6. For the `requested_filename` argument, derive a name from the original, like `originalFilename_filled_autonomously` (e.g., if original was `test.pdf`, use `test_filled_autonomously`). Note the exact path of the newly created PDF. Critically evaluate the output of this tool call based on the **RESPONSE VERIFICATION AND QUALITY CONTROL** guidelines, specifically checking the reported success/failure and the path to the generated file.\n"
-    "8.  **Verify Generated PDF:** Load the newly created PDF (using the path noted in step 7) using `load_pdf_document` with a unique verification ID (e.g., 'generated_doc_verification'). Then, use `query_pdf_document` on this verification ID with a detailed query to check if *all* the intended substitutions (based on the analysis in step 4 and substitutions in step 5) are present and correctly formatted in the generated PDF. The query should be specific, e.g., 'Verify if the following information was correctly inserted: [list the specific substituted data points]. Report any missing or incorrect information.' Critically evaluate the output of this verification query based on the **RESPONSE VERIFICATION AND QUALITY CONTROL** guidelines to assess if the writing model performed as intended and if any further changes are needed.\n"
-    "9.  **Report Outcome:** Your final response to the user must confirm task completion. State the path to the NEWLY created PDF. Briefly mention that placeholders were identified (or an attempt was made), Crucially, report the outcome of the detailed PDF verification step (step 8), noting if all intended changes were found or if any were missing/incorrect. execute the entire process autonomously except information requests.\n\n"
+    "**TASK: FILE CREATION:**\n"
+    "When a user asks to create a file (e.g., 'create a text file', 'write a JSON config', 'make a DOCX document'), you MUST follow this procedure:\n"
+    "1.  **Identify File Type and Path:** Determine the desired file type (e.g., .txt, .json, .docx, .html) and the requested file path from the user's request.\n"
+    "2.  **Generate Exact Content:** Use your main LLM capabilities to generate the *complete and exact* text content that should be written to the file. Ensure the content is correctly formatted for the target file type (e.g., valid JSON for a .json file, appropriate text structure for a .docx file). Do NOT include any conversational filler or markdown formatting around the content itself.\n"
+    "3.  **Write File:** Use the `write_file` tool. Provide the determined `file_path` and the `content` you generated in step 2. Await the tool's result.\n"
+    "4.  **Verify Outcome:** Critically evaluate the result returned by the `write_file` tool based on the **RESPONSE VERIFICATION AND QUALITY CONTROL** guidelines. Check if the tool reported success and note the path where the file was saved.\n"
+    "5.  **Report Outcome:** Your final response to the user must confirm task completion. State the path to the newly created file. Report the outcome of the verification step, noting if the file was created successfully.\n\n"
 )
 
 PDF_CONTEXT_LLM_MODEL = "gemini-2.5-flash-preview-05-20"
@@ -134,40 +121,9 @@ PDF_CHUNK_SIZE = 512
 PDF_CHUNK_OVERLAP = 50
 ITEM_SIMILARITY_TOP_K = 4
 PDF_PERSIST_BASE_DIR_NAME = "agent_pdf_storage"
-WRITING_LLM_MODEL = "gemini-2.5-flash-preview-05-20"  # Can be same as PDF_CONTEXT_LLM_MODEL or different
-WRITING_LLM_TEMP = 0.7 # Temperature for creative document generation
-WRITING_OUTPUT_BASE_DIR_NAME = "agent_generated_documents"
-
 PDF_TYPE = "pdf"
 FILE_TYPE = "file"
 URL_TYPE = "url"
-
-WRITING_SYSTEM_PROMPT_TEMPLATE = """
-You are an expert AI document author, specializing in creating dense, well-structured, and professionally formatted documents suitable for formal use. Your output MUST be pure markdown, adhering strictly to the following guidelines.
-
-DOCUMENT STRUCTURE & FORMATTING (MANDATORY MARKDOWN):
-1.  **Main Title (Implicit from first H1):** Your response MUST begin directly with the main title of the document, formatted as `# Document Title`. This title should be descriptive and formal. Do NOT output any text before this H1 title.
-2.  **Sections (H2):** Use `## Section Title` for all primary sections. Ensure logical flow.
-3.  **Subsections (H3):** Use `### Subsection Title` for sub-topics within sections.
-4.  **Emphasis:**
-    *   Use `**bold text**` for strong emphasis on key terms, definitions, or critical points.
-    *   Use `*italic text*` or `_italic text_` for mild emphasis (e.g., foreign words, titles of works, or subtle highlights).
-5.  **Lists:**
-    *   Use `* List item` or `- List item` for unordered bulleted lists. Ensure consistent formatting. Indent sub-lists if necessary (e.g. two spaces before the asterisk).
-6.  **Paragraphs:** Write concise, information-dense paragraphs with clear topic sentences. Aim for maximum clarity and efficiency with minimal word count. Avoid redundancy and unnecessary adjectives or adverbs. Every sentence must contribute significant value.
-7.  **Horizontal Rules:** If a strong visual separation is absolutely essential between major distinct content blocks (not typically between H2/H3 sections, but perhaps to delineate a completely different part of the document like an appendix from the main body, or before a signature block if it's not under a ## Signatures heading), use `---` on its own line. Use VERY sparingly.
-
-CONTENT REQUIREMENTS:
-1.  **Direct Output:** Start your response DIRECTLY with the H1 markdown title. NO conversational filler, introductions like "Okay, here is the document...", or self-referential statements ("As an AI...").
-2.  **Density and Efficiency:** The document must be as compact and information-dense as possible while remaining perfectly readable and comprehensive. Your goal is to convey all necessary information in the fewest possible words and pages. Prioritize impactful information over lengthy explanations.
-3.  **Professional Tone:** Maintain a highly formal, objective, and polished tone throughout the entire document.
-4.  **Completeness:** Ensure the document is self-contained and thoroughly covers the requested topic from introduction to conclusion, as appropriate for the document type.
-5.  **Handle Autonomous Fillings:** The input text will contain sections marked like `[AI AUTONOMOUSLY FILLED: Some generated text]`. **CRITICAL:** When you encounter this pattern, you MUST render *only* the text inside the brackets (`Some generated text`) in the final markdown output. This generated text should **completely replace** the original text that was within the brackets, including any placeholder characters like underscores (`___`) or bracketed terms (`[]`, `{{}}`). Ensure the surrounding labels (e.g., "Printed Name:", "Signature:", "Date:") are preserved and the generated text is placed immediately after them, replacing the original placeholder line. Do NOT include the `[AI AUTONOMOUSLY FILLED: ]` part in the output markdown.
-
-USER'S DOCUMENT REQUEST: "{user_document_request}"
-
-Remember: Begin your response *immediately* with the H1 markdown title.
-"""
 
 class Agent:
     def __init__(self, system_prompt: str = autonomous_system_prompt, name: str = "Main_Agent", verbose: bool = False):
@@ -181,21 +137,10 @@ class Agent:
         self.persist_base_dir.mkdir(parents=True, exist_ok=True)
         self._pdf_settings_configured = False
         self._email_settings_configured = False
-        self.writing_output_dir = Path(f"./{WRITING_OUTPUT_BASE_DIR_NAME}")
-        self.writing_output_dir.mkdir(parents=True, exist_ok=True)
-
-        self.writing_llm = RateLimitedGemini(
-            model_name=WRITING_LLM_MODEL, # Corrected parameter name
-            api_key=GeminiKey,
-            temperature=WRITING_LLM_TEMP
-        )
-
         self.worker = FunctionAgent(
             tools=self.tools,
             llm=llm,
             system_prompt=system_prompt,)
-        if self.verbose:
-            print(f"--- [{self.name}] Generated documents will be saved to: {self.writing_output_dir.resolve()} ---")
 
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=390000)
         print(f"Initialized '{self.name}' and {len(self.tools)} tools.")
@@ -372,25 +317,18 @@ class Agent:
                 requested_filename=requested_filename
             )
 
-        create_document_tool = FunctionTool.from_defaults(
-            fn=_create_document_tool_func, # This is now async
-            name="create_document_from_description",
+        write_file_tool = FunctionTool.from_defaults(
+            fn=self._create_document_from_description_internal, # Renamed function internally
+            name="write_file",
             description=(
-                "Generates a styled PDF document based on a textual 'document_description'. "
-                "The document content is generated by an AI writer based on your description and then converted to PDF. "
-                "YOU (the main agent) MUST construct the 'document_description' carefully. If the document needs to include specific user-provided data, "
-                "you must first collect that data using the 'get_text_input' tool (for each piece of information individually). "
-                "Then, you MUST incorporate this data into the 'document_description' string, typically by appending a 'User Data: ' section with a JSON object of the collected key-value pairs. "
-                "Example: 'Create an approval form for an educational trip. User Data: {\"Participant Name\": \"John Doe\", \"Approval Date\": \"2024-05-20\"}'. "
-                "This tool ITSELF DOES NOT ask the user for input; it relies on the 'document_description' you provide to be complete and correctly formatted for the underlying writing model. "
-                "Required argument: 'document_description' (string, a detailed description of the document to be created, INCLUDING any user-provided data formatted as described above). "
-                "Optional argument: 'requested_filename' (string, a desired filename for the PDF, without the .pdf extension. If not provided or empty, a name will be generated based on the document title or description). "
-                "Returns a message starting with 'Successfully created document. Absolute path: /path/to/your_doc.pdf' on success, "
-                "or a message starting with 'Error:' if generation failed (e.g., 'Error: Writing LLM returned empty content. Document creation failed.'). "
-                "You MUST use the exact absolute path returned by this tool for any subsequent actions (e.g., attaching to an email)."
+                "Writes the exact provided 'content' to a file at the specified 'file_path'. "
+                "This tool uses the integrated file writing functionality to create or overwrite files. "
+                "Required arguments: 'file_path' (string, the full or relative path where the file should be written), "
+                "'content' (string, the exact content to write to the file). "
+                "Returns a status message indicating success or failure, including the absolute path on success."
             )
         )
-        self.tools.append(create_document_tool)
+        self.tools.append(write_file_tool)
 
         # --- Email Functionality Tools ---
         # Note: These tools now signal if a Google Access Token is required.
@@ -452,93 +390,20 @@ class Agent:
         print("-------------------------------------------\n")
         return f"The user responded to the prompt '{prompt}' with: '{additional_input}'."
 
-    def _create_document_from_description_internal(self, document_description: str, requested_filename: str) -> str:
+    def _create_document_from_description_internal(self, file_path: str, content: str) -> str:
         """
-        Internal method to handle document creation.
-        1. Uses an LLM to generate markdown content based on the description.
-        2. Parses the markdown and title.
-        3. Uses a utility to convert markdown to a styled PDF.
-        4. Saves the PDF to the agent's writing output directory.
+        Internal method to handle file writing using FileEncoder.write_file_content.
         """
         if self.verbose:
-            print(f"--- [{self.name}] Starting document generation for: '{document_description}' ---")
+            print(f"--- [{self.name}] Starting file writing for: '{file_path}' ---")
 
-        # 1. Generate content using the specialized writing LLM
-        full_writing_prompt = WRITING_SYSTEM_PROMPT_TEMPLATE.format(user_document_request=document_description)
         try:
+            result = write_file_content(file_path_str=file_path, content=content)
             if self.verbose:
-                print(f"--- [{self.name}] Sending request to writing LLM (Model: {self.writing_llm.metadata.model_name}) ---")
-            
-            # Using .complete for synchronous call as this tool function is synchronous
-            response = self.writing_llm.complete(full_writing_prompt)
-            generated_markdown_content = response.text.strip()
-
-            if not generated_markdown_content:
-                msg = "Writing LLM returned empty content. Cannot create document."
-                if self.verbose: print(f"--- [{self.name}] {msg} ---")
-                return msg
-            
-            if self.verbose:
-                print(f"--- [{self.name}] Received markdown from writing LLM (first 200 chars): '{generated_markdown_content[:200]}...' ---")
-
+                print(f"--- [{self.name}] write_file_content result: {result} ---")
+            return result
         except Exception as e:
-            error_msg = f"Error during writing LLM call: {str(e)}"
-            if self.verbose:
-                print(f"--- [{self.name}] {error_msg} ---")
-                import traceback
-                traceback.print_exc()
-            return error_msg
-
-        # 2. Extract title from markdown (first H1, as per WRITING_SYSTEM_PROMPT_TEMPLATE)
-        document_title_from_llm = "Untitled Document"
-        if generated_markdown_content:
-            first_line = generated_markdown_content.split('\n', 1)[0]
-            title_match = re.match(r"#\s*(.*)", first_line)
-            if title_match:
-                document_title_from_llm = title_match.group(1).strip()
-            else: # Fallback title if no H1 is found in the first line
-                # Use first few words of description for a fallback title, or a generic one
-                fallback_title_base = re.sub(r'[^\w\s-]', '', document_description[:50]).strip()
-                document_title_from_llm = re.sub(r'[-\s]+', '_', fallback_title_base) if fallback_title_base else "Generated_Document"
-        
-        if self.verbose:
-            print(f"--- [{self.name}] Extracted/determined document title: '{document_title_from_llm}' ---")
-
-        # 3. Generate filename
-        filename_base = "Generated_Document"
-        if requested_filename:
-            # Sanitize requested_filename
-            filename_base = re.sub(r'[^\w\s-]', '', requested_filename) # Allow alphanumeric, space, hyphen
-            filename_base = re.sub(r'[-\s]+', '_', filename_base).strip('_') # Replace space/hyphen with underscore
-            filename_base = filename_base[:70] # Max length
-            if not filename_base: filename_base = "Custom_Name_Doc" # Fallback for empty sanitized name
-        elif document_title_from_llm and document_title_from_llm.strip().lower() != "untitled document":
-            sanitized_title = re.sub(r'[\*_#]', '', document_title_from_llm) # Remove markdown
-            sanitized_title = re.sub(r'[^\w\s-]', '', sanitized_title)
-            sanitized_title = re.sub(r'[-\s]+', '_', sanitized_title).strip('_')
-            filename_base = sanitized_title[:70]
-            if not filename_base: filename_base = "Titled_Doc"
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pdf_filename = f"{filename_base}_{timestamp}.pdf"
-        pdf_filepath = self.writing_output_dir / pdf_filename
-
-        if self.verbose:
-            print(f"--- [{self.name}] Determined output filepath: {pdf_filepath.resolve()} ---")
-
-        # 4. Create PDF using the utility
-        try:
-            success, message, pdf_filepath_returned = create_styled_pdf_from_markdown(
-                output_filepath=str(pdf_filepath.resolve()),
-                markdown_content=generated_markdown_content,
-                document_title=document_title_from_llm,
-                verbose=self.verbose 
-            )
-
-            # The message from create_styled_pdf_from_markdown already includes success/error details
-            return message
-        except Exception as e:
-            error_msg = f"Unexpected error during PDF generation utility call: {str(e)}"
+            error_msg = f"Error during file writing: {str(e)}"
             if self.verbose:
                 print(f"--- [{self.name}] {error_msg} ---")
                 import traceback
