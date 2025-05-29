@@ -1,22 +1,27 @@
 llama-index
 llama-index-llms-gemini
-python-dotenv
+python-dotenv~=1.1.0
 llama-index-embeddings-gemini
 pypdf
-dotenv
+dotenv~=0.9.9
 pymupdf
 llama-index-readers-file
-<<<<<<< HEAD
-reportlab
+reportlab~=4.4.1
 llama-index-readers-web
-tenacity
-flask
-firebase-admin
-=======
+tenacity~=9.1.2
+flask~=3.1.1
+firebase-admin~=6.8.0
 tenacity
 googlesearch-python
 reportlab
 llama-index-readers-web
 webdriver-manager
 selenium
->>>>>>> 57cc1c66c22e6ce11d5c8042b70fbdffe31cb244
+llama-index-core~=0.12.38
+protobuf~=5.29.5
+google-api-python-client~=2.170.0
+playwright~=1.52.0
+uvicorn~=0.34.2
+fastapi~=0.115.12
+pydantic~=2.11.5
+requests~=2.32.3

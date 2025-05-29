@@ -1,16 +1,13 @@
 import os
 import pathlib
-import magic  # For MIME type detection
-from llama_index.llms.gemini import Gemini
-from llama_index.core.llms import ChatMessage, MessageRole
+import magic
 
-# --- Content Extractors ---
 import pypdfium2 as pdfium
 from docx import Document as DocxDocument
 import pandas as pd
 from pptx import Presentation
 from bs4 import BeautifulSoup
-
+from llama_index.core.tools import FunctionTool
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -166,19 +163,19 @@ def extract_text_from_html(file_path: pathlib.Path) -> str:
         return f"[Error extracting HTML: {e}]"
 
 
-def get_file_content(file_path_str: str) -> tuple[str | None, str | None]:
+def get_file_content(file_path_str: str) -> tuple[str, str]:
     """
     Detects file type and extracts its text content.
     Returns (content_string, error_message_string)
     """
     file_path = pathlib.Path(file_path_str)
     if not file_path.is_file():
-        return None, f"Error: File not found at '{file_path_str}'"
+        return "", f"Error: File not found at '{file_path_str}'"
 
     ext = file_path.suffix.lower()
-    content: str | None = None
-    error_msg: str | None = None
-    mime_type: str | None = None
+    content: str = ""
+    error_msg: str = ""
+    mime_type: str = ""
 
     try:
         # Mime type detection can be slow for large files, consider conditional use or timeout
@@ -213,10 +210,10 @@ def get_file_content(file_path_str: str) -> tuple[str | None, str | None]:
     # If content was extracted, check if it's an error message from the extractor
     if isinstance(content, str) and content.startswith("[Error extracting"):
         error_msg = content
-        content = None  # Clear content as it's an error string
+        content = ""  # Clear content as it's an error string
 
     # --- Priority 2: MIME-type based if extension didn't yield content or for other types ---
-    if content is None and error_msg is None and mime_type:
+    if content == "" and error_msg == "" and mime_type:
         print(f"Attempting MIME-type based processing for: {mime_type}")
         if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" and ext != ".docx":
             content = extract_text_from_docx(file_path)
@@ -244,10 +241,10 @@ def get_file_content(file_path_str: str) -> tuple[str | None, str | None]:
 
         if isinstance(content, str) and content.startswith("[Error extracting"):
             error_msg = content
-            content = None
+            content = ""
 
     # --- Priority 3: Last resort - If no content and no specific error, try reading as text ---
-    if content is None and error_msg is None:
+    if content == "" and error_msg == "":
         print(
             f"No specific handler for extension '{ext}' or MIME type '{mime_type}'. Attempting generic text extraction as a last resort...")
         # Avoid trying to read known binary/archive types as text if not already caught
@@ -265,117 +262,86 @@ def get_file_content(file_path_str: str) -> tuple[str | None, str | None]:
                 content = extract_text_from_txt(file_path)
                 if isinstance(content, str) and content.startswith("[Error extracting"):
                     error_msg = content
-                    content = None
-                elif content is not None and not content.strip():
+                    content = ""
+                elif content != "" and not content.strip():
                     error_msg = f"File (ext: {ext}, MIME: {mime_type}) was read as text but resulted in empty or whitespace-only content."
-                    content = None
+                    content = ""
             except Exception as e:
                 error_msg = f"Unsupported file type (ext: {ext}, MIME: {mime_type}) or error during last resort text reading: {e}"
 
     if error_msg:
-        return None, error_msg
+        return "", error_msg
 
-    if content is None:
-        return None, f"Could not extract text content from the file (ext: {ext}, MIME: {mime_type}). It might be a binary file or an unsupported format."
+    if content == "":
+        return "", f"Could not extract text content from the file (ext: {ext}, MIME: {mime_type}). It might be a binary file or an unsupported format."
 
     if len(content) > MAX_CONTENT_CHARS:
         print(
             f"Warning: Content is very long ({len(content)} chars). Truncating to {MAX_CONTENT_CHARS} characters for AI.")
         content = content[:MAX_CONTENT_CHARS] + "\n[...content truncated...]"
 
-    return content, None
+    return content, ""
 
-
-def get_ai_description(text_content: str, model_name: str = "models/gemini-1.5-flash-latest") -> str:
-    """ Sends text content to Gemini AI and returns its description. """
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return "Error: GOOGLE_API_KEY environment variable not set."
-
-    try:
-        llm = Gemini(model_name=model_name, api_key=api_key)
-        prompt = (
-            "You are an AI assistant tasked with describing the contents of a file. "
-            "Based on the following extracted text from the file, provide a concise summary "
-            "and an overview of its content and purpose. \n"
-            "If the content appears to be source code, describe what the code likely does, its language, and key functionalities. \n"
-            "If it's structured data (like CSV, JSON, or Excel sheet data), describe the data's structure, an example of the kind of information it holds, and its potential use. \n"
-            "If it's a document (like TXT, PDF, DOCX), summarize its main topic, key points, and intended audience or purpose. \n"
-            "If the text is from a presentation (PPTX), summarize the overall topic and the key messages from the slides. \n"
-            "If the text is from a webpage (HTML), describe the main content and purpose of the page. \n"
-            "If the content is truncated, acknowledge that your summary is based on the available portion.\n"
-            "If an error message is part of the extracted text (e.g., '[Error extracting...]'), mention that the extraction was partial or failed for that part.\n"
-            "Be objective and stick to what can be inferred from the provided text.\n\n"
-            "--- Extracted File Content ---\n"
-            f"{text_content}"
-            "\n\n--- End of File Content ---\n\n"
-            "Detailed AI Description of File Contents:"
-        )
-
-        messages = [ChatMessage(role=MessageRole.USER, content=prompt)]
-        response = llm.chat(messages)
-        return response.message.content.strip()
-
-    except Exception as e:
-        return f"Error communicating with Gemini AI: {e}"
-
-
-def main():
-    file_path_str = input("Enter the full path to the file: ").strip()
-    if not file_path_str:
-        print("No file path entered. Exiting.")
-        return
-
+def _read_file(file_path:str) -> str:
     try:
         # Remove leading/trailing quotes if present (common from drag-and-drop)
-        if len(file_path_str) > 1 and file_path_str.startswith('"') and file_path_str.endswith('"'):
-            file_path_str = file_path_str[1:-1]
-        resolved_path = str(pathlib.Path(file_path_str).resolve(strict=True))
+        if len(file_path) > 1 and file_path.startswith('"') and file_path.endswith('"'):
+            file_path = file_path[1:-1]
+        resolved_path = str(pathlib.Path(file_path).resolve(strict=True))
     except FileNotFoundError:
-        print(f"Error: File not found at '{file_path_str}' (or after resolving potential quotes).")
-        return
+        msg = f"Error: File not found at '{file_path}' (or after resolving potential quotes)."
+        print(msg)
+        return msg
     except Exception as e:
-        print(f"Error resolving path '{file_path_str}': {e}")
-        return
+        msg = f"Error resolving path '{file_path}': {e}"
+        print(msg)
+        return msg
 
     print(f"\nAttempting to process file: {resolved_path}")
     content, error_msg = get_file_content(resolved_path)
 
-    if error_msg:
-        print(f"\n--- Error during file processing ---")
-        print(error_msg)
-        # Decide if you want to send error messages to AI or just stop
-        # For now, we stop. If you want to send, you'd do:
-        # if content is None: content = f"[File processing error: {error_msg}]"
-        # else: content += f"\n[File processing warning: {error_msg}]"
-        # ... then proceed to AI description.
-        return
+    if error_msg == "":
+        msg = f"\n--- Error during file processing {error_msg} ---"
+        print(msg)
+        return msg
 
-    if not content:
+    if not content == "":
         print(f"\n--- File Processing Result ---")
-        print("No text content could be extracted, or the file is not suitable for text summarization.")
-        return
+        msg = "No text content could be extracted, or the file is not suitable for text summarization."
+        print(msg)
+        return msg
 
-    print(f"\n--- Extracted Content (first 500 chars) ---")
-    print(content[:500] + ("..." if len(content) > 500 else ""))
-    print("--- End of Extracted Content Sample ---")
+    return f"File content --\n{content}"
 
-    print("\nSending content to Gemini AI for description...")
-    description = get_ai_description(content, model_name="models/gemini-2.0-flash")
-
-    print(f"\n--- AI Description ---")
-    print(description)
-
-
-if __name__ == "__main__":
-    # Ensure necessary libraries for pandas excel handling are hinted if missing
-    try:
-        import openpyxl
-    except ImportError:
-        print("Hint: For full .xlsx support, you might need to install 'openpyxl': pip install openpyxl")
-    # try:
-    #     import xlrd # xlrd is mainly for older .xls files
-    # except ImportError:
-    #     print("Hint: For older .xls file support, you might need to install 'xlrd': pip install xlrd")
-
-    main()
+read_file = FunctionTool.from_defaults(
+    fn=_read_file,
+    name="read_file",
+    description=(
+        "Extracts text content from a specified local file. "
+        "This tool intelligently handles various common file formats. "
+        "Provide the full path to the file as a single string argument named `file_path`. "
+        "The path can be absolute or relative, and leading/trailing quotes will be automatically removed. "
+        "\n\n"
+        "Supported file formats include:\n"
+        f"- Plain text files (e.g., .txt, .py, .json, .csv, .md, .yaml, .log, .srt, .xml)\n"
+        f"- PDF documents (.pdf)\n"
+        f"- Microsoft Word documents (.docx)\n"
+        f"- Microsoft Excel spreadsheets (.xlsx, .xls) - Extracts data from all sheets. For each sheet, it reads up to the first {EXCEL_MAX_ROWS_TO_READ} rows. If a sheet has more rows, a truncation note will be included.\n"
+        f"- Microsoft PowerPoint presentations (.pptx) - Extracts text from all slides.\n"
+        f"- HTML files (.html, .htm) - Extracts the main textual content.\n"
+        "\n"
+        "The tool attempts to auto-detect the file type first by extension, then by MIME type, and finally as a last resort, attempts to read it as plain text. "
+        f"If the extracted text content exceeds {MAX_CONTENT_CHARS} characters, it will be truncated, and a note indicating truncation will be appended.\n"
+        "\n"
+        "Output:\n"
+        "- On success: Returns a string prefixed with 'File content --\\n' followed by the extracted text.\n"
+        "- On failure (e.g., file not found, unsupported format, extraction error): Returns a descriptive error message string, often prefixed with '--- Error during file processing ---'.\n"
+        "\n"
+        "Limitations:\n"
+        "- Does NOT process image files (e.g., .jpg, .png).\n"
+        "- Does NOT process audio/video files.\n"
+        "- Does NOT automatically unpack or read content from compressed archives (e.g., .zip, .rar); these must be extracted first before attempting to read their contents.\n"
+        f"- For Excel files, only the first {EXCEL_MAX_ROWS_TO_READ} rows per sheet are processed.\n"
+        f"- Very large files will have their content truncated at {MAX_CONTENT_CHARS} characters."
+    )
+)

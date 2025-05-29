@@ -21,7 +21,7 @@ from unittest.mock import patch, MagicMock
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
     my_agent = agent.Agent(
-        verbose=False
+        verbose=True
     )
 
     user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change), then send a gmail to eitankorh123@gmail.com with it in it, and with some message related to the file"
