@@ -137,19 +137,6 @@ class Agent:
         self.persist_base_dir.mkdir(parents=True, exist_ok=True)
         self._pdf_settings_configured = False
         self._email_settings_configured = False
-<<<<<<< HEAD
-        self.writing_output_dir = Path(f"./{WRITING_OUTPUT_BASE_DIR_NAME}")
-        self.writing_output_dir.mkdir(parents=True, exist_ok=True)
-        self.plan = ""
-
-        self.writing_llm = RateLimitedGemini(
-            model_name=WRITING_LLM_MODEL, # Corrected parameter name
-            api_key=GeminiKey,
-            temperature=WRITING_LLM_TEMP
-        )
-
-=======
->>>>>>> 8ee50f18106198084d7088798cf7417704830ad5
         self.worker = FunctionAgent(
             tools=self.tools,
             llm=llm,
