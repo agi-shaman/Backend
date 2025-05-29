@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Assistant</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        #userInfo, #emailForm, #status { margin-bottom: 20px; }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        input[type="email"], input[type="text"], textarea { width: 95%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        label { display: block; margin-bottom: 5px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gmail Assistant with LlamaIndex & Gemini</h1>
+
+        <div id="authContainer">
+            <button id="loginButton">Sign in with Google</button>
+        </div>
+
+        <div id="userInfo" class="hidden">
+            <p>Logged in as: <span id="userName"></span> (<span id="userEmail"></span>)</p>
+            <button id="logoutButton">Sign Out</button>
+        </div>
+
+        <div id="emailForm" class="hidden">
+            <h2>Create Email</h2>
+            <div>
+                <label for="recipient">Recipient Email:</label>
+                <input type="email" id="recipient" required>
+            </div>
+            <div>
+                <label for="prompt">Email Prompt:</label>
+                <textarea id="prompt" rows="3" placeholder="e.g., ask for a project update, congratulate on new role"></textarea>
+            </div>
+            <button id="generateButton">Generate & Preview Email</button>
+        </div>
+
+        <div id="previewSection" class="hidden">
+            <h3>Email Preview</h3>
+            <p><strong>To:</strong> <span id="previewTo"></span></p>
+            <p><strong>Subject:</strong> <span id="previewSubject"></span></p>
+            <p><strong>Body:</strong></p>
+            <pre id="previewBody" style="white-space: pre-wrap; border: 1px solid #eee; padding: 10px; background: #f9f9f9;"></pre>
+            <button id="sendButton">Send Email</button>
+            <button id="draftButton">Save as Draft</button>
+            <button id="cancelButton">Cancel/Edit</button>
+        </div>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        // IMPORTANT: Replace with your Firebase project's SDK configuration
+        const firebaseConfig = {
+          apiKey: "AIzaSyBAGm7BpLxW-UIQQPMQ1ZHqpVtbbQMPigs",
+          authDomain: "shaman-46b8f.firebaseapp.com",
+          projectId: "shaman-46b8f",
+          storageBucket: "shaman-46b8f.firebasestorage.app",
+          messagingSenderId: "33913315470",
+          appId: "1:33913315470:web:e532cfb4e172506b7769df",
+          measurementId: "G-F0EYP48NTW"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const provider = new firebase.auth.GoogleAuthProvider();
+
+        // Add Gmail scopes. This is CRUCIAL for getting an access token for Gmail.
+        provider.addScope('https://www.googleapis.com/auth/gmail.modify');
+        // You can add more specific scopes if needed, e.g.:
+        // provider.addScope('https://www.googleapis.com/auth/gmail.compose');
+        // provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
+
+        const loginButton = document.getElementById('loginButton');
+        const logoutButton = document.getElementById('logoutButton');
+        const userInfoDiv = document.getElementById('userInfo');
+        const userNameSpan = document.getElementById('userName');
+        const userEmailSpan = document.getElementById('userEmail');
+        const emailFormDiv = document.getElementById('emailForm');
+        const generateButton = document.getElementById('generateButton');
+        const recipientInput = document.getElementById('recipient');
+        const promptInput = document.getElementById('prompt');
+        const statusDiv = document.getElementById('status');
+
+        const previewSection = document.getElementById('previewSection');
+        const previewTo = document.getElementById('previewTo');
+        const previewSubject = document.getElementById('previewSubject');
+        const previewBody = document.getElementById('previewBody');
+        const sendButton = document.getElementById('sendButton');
+        const draftButton = document.getElementById('draftButton');
+        const cancelButton = document.getElementById('cancelButton');
+
+        let currentIdToken = null;
+        let currentAccessToken = null; // To store Google OAuth access token
+        let generatedEmail = null;
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                userNameSpan.textContent = user.displayName;
+                userEmailSpan.textContent = user.email;
+                userInfoDiv.classList.remove('hidden');
+                emailFormDiv.classList.remove('hidden');
+                loginButton.parentElement.classList.add('hidden'); // Hide authContainer
+
+                user.getIdToken().then(idToken => {
+                    currentIdToken = idToken;
+                });
+
+                // The GoogleAuthProvider should provide an access token after sign-in
+                // if scopes were requested. We might need to explicitly get it from the result
+                // of signInWithPopup, or Firebase might handle it.
+                // For simplicity, we'll rely on the idToken for backend auth and assume
+                // the backend will use the user's context if set up correctly.
+                // *Correction*: We need the OAuth Access Token for Google APIs.
+                // It's usually part of the credential object from the sign-in result.
+                // We'll grab it during login.
+
+            } else {
+                userNameSpan.textContent = '';
+                userEmailSpan.textContent = '';
+                userInfoDiv.classList.add('hidden');
+                emailFormDiv.classList.add('hidden');
+                previewSection.classList.add('hidden');
+                loginButton.parentElement.classList.remove('hidden');
+                currentIdToken = null;
+                currentAccessToken = null;
+                generatedEmail = null;
+            }
+        });
+
+        loginButton.addEventListener('click', () => {
+            auth.signInWithPopup(provider)
+                .then((result) => {
+                    // This gives you a Google Access Token. You can use it to access Google APIs.
+                    const credential = result.credential;
+                    currentAccessToken = credential.accessToken; // IMPORTANT
+                    currentIdToken = result.user.getIdToken(); // Also get ID token
+
+                    statusDiv.textContent = 'Logged in successfully!';
+                    statusDiv.style.color = 'green';
+                }).catch((error) => {
+                    console.error("Login error:", error);
+                    statusDiv.textContent = `Login failed: ${error.message}`;
+                    statusDiv.style.color = 'red';
+                });
+        });
+
+        logoutButton.addEventListener('click', () => {
+            auth.signOut().then(() => {
+                statusDiv.textContent = 'Logged out.';
+                statusDiv.style.color = 'black';
+            });
+        });
+
+        generateButton.addEventListener('click', async () => {
+            if (!currentIdToken || !currentAccessToken) {
+                statusDiv.textContent = 'Please sign in first.';
+                statusDiv.style.color = 'red';
+                return;
+            }
+            const recipient = recipientInput.value;
+            const prompt = promptInput.value;
+            if (!recipient || !prompt) {
+                statusDiv.textContent = 'Recipient and prompt are required.';
+                statusDiv.style.color = 'red';
+                return;
+            }
+
+            statusDiv.textContent = 'Generating email...';
+            statusDiv.style.color = 'blue';
+            previewSection.classList.add('hidden');
+
+            try {
+                const response = await fetch('/generate_email', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentIdToken}`, // For backend to verify user
+                        'X-Goog-Access-Token': currentAccessToken // For backend to use with Gmail API
+                    },
+                    body: JSON.stringify({ recipient, prompt })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    generatedEmail = data; // Store { subject, body }
+                    previewTo.textContent = recipient;
+                    previewSubject.textContent = data.subject;
+                    previewBody.textContent = data.body;
+                    previewSection.classList.remove('hidden');
+                    statusDiv.textContent = 'Preview generated.';
+                    statusDiv.style.color = 'green';
+                } else {
+                    statusDiv.textContent = `Error: ${data.error || 'Failed to generate email'}`;
+                    statusDiv.style.color = 'red';
+                }
+            } catch (error) {
+                console.error("Generate error:", error);
+                statusDiv.textContent = 'Network error or server issue during generation.';
+                statusDiv.style.color = 'red';
+            }
+        });
+
+        async function handleEmailAction(action) {
+            if (!currentIdToken || !currentAccessToken || !generatedEmail) {
+                statusDiv.textContent = 'No email generated or not signed in.';
+                statusDiv.style.color = 'red';
+                return;
+            }
+            const recipient = recipientInput.value; // Could also get from previewTo
+
+            statusDiv.textContent = `Processing ${action}...`;
+            statusDiv.style.color = 'blue';
+
+            try {
+                const response = await fetch(`/${action}_email`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentIdToken}`,
+                        'X-Goog-Access-Token': currentAccessToken
+                    },
+                    body: JSON.stringify({
+                        recipient: recipient,
+                        subject: generatedEmail.subject,
+                        body: generatedEmail.body
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    statusDiv.textContent = data.message;
+                    statusDiv.style.color = 'green';
+                    previewSection.classList.add('hidden');
+                    emailFormDiv.classList.remove('hidden'); // Show form again
+                    recipientInput.value = '';
+                    promptInput.value = '';
+                } else {
+                    statusDiv.textContent = `Error: ${data.error || `Failed to ${action} email`}`;
+                    statusDiv.style.color = 'red';
+                }
+            } catch (error) {
+                console.error(`${action} error:`, error);
+                statusDiv.textContent = `Network error or server issue during ${action}.`;
+                statusDiv.style.color = 'red';
+            }
+        }
+
+        sendButton.addEventListener('click', () => handleEmailAction('send'));
+        draftButton.addEventListener('click', () => handleEmailAction('draft'));
+        cancelButton.addEventListener('click', () => {
+            previewSection.classList.add('hidden');
+            emailFormDiv.classList.remove('hidden');
+            statusDiv.textContent = 'Operation cancelled.';
+            statusDiv.style.color = 'black';
+        });
+
+    </script>
+</body>
+</html>
