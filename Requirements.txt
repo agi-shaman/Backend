@@ -8,3 +8,4 @@ dotenv
 pymupdf
 llama-index-readers-file
 llama-index-readers-web
+googlesearch-python
