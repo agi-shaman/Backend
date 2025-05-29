@@ -24,7 +24,7 @@ async def run_agent():
         verbose=True
     )
 
-    user_task = "load Backend/test.pdf at the current dir, and fill in the information needed with place holders, in a new pdf file(copy the current file and change the fields needed for change), then send a gmail to eitankorh123@gmail.com with it in it, and with some message related to the file"
+    user_task = "load Backend/test.pdf at the current dir, and write me a .xlsx file including all of the needed information for filling it"
 
     print(f"\n--- [Test Script] Task for agent: {user_task} ---")
     response = await my_agent.run(user_task)

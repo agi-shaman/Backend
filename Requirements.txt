@@ -32,3 +32,4 @@ pandas~=2.2.3
 python-pptx~=1.0.2
 beautifulsoup4~=4.13.4
 numpy~=2.2.6
+openpyxl

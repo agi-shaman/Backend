@@ -5,7 +5,7 @@ import shutil
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.readers.web import SimpleWebPageReader
-
+import datetime
 from .QueryTypes import QueryTypes
 from .rate_limited_gemini import RateLimitedGemini
 from .FileDecoder import get_file_content
@@ -194,6 +194,35 @@ class Agent:
             )
         )
         self.tools.append(call_sub_agent_tool)
+
+        def _get_current_datetime_with_timezone_func() -> str:
+            """
+            Retrieves the current local date and time, including the timezone name and UTC offset.
+            """
+            if self.verbose: print(f"--- [{self.name}] Tool 'get_current_datetime_with_timezone' called ---")
+            
+            now_local = datetime.datetime.now().astimezone()
+            # Format: YYYY-MM-DD HH:MM:SS TIMEZONE_NAME (UTC_OFFSET)
+            # Example: 2023-10-27 15:30:45 PDT (-0700)
+            # Or using ISO 8601 format which is more standard:
+            # formatted_dt = now_local.isoformat()
+            # Example: 2023-10-27T15:30:45.123456-07:00
+
+            # Let's use a clear, human-readable format that includes the timezone name
+            formatted_dt = now_local.strftime("%Y-%m-%d %H:%M:%S %Z (%z)")
+            
+            return f"The current date and time is: {formatted_dt}"
+
+        current_datetime_tool = FunctionTool.from_defaults(
+            fn=_get_current_datetime_with_timezone_func,
+            name="get_current_datetime_with_timezone",
+            description=(
+                "Provides the current system date and time, including the local timezone name and UTC offset. "
+                "Use this when you need to know the exact current moment for logging, timestamping, "
+                "or responding to time-sensitive queries."
+            )
+        )
+        self.tools.append(current_datetime_tool)
 
         # --- URL Functionality Tools ---
         def _load_url_document_tool_func(url: str, url_id: str) -> str:
@@ -402,6 +431,109 @@ class Agent:
             )
         )
         self.tools.append(cli_input_tool)
+
+        def _create_plan_tool_func(self, plan: str) -> str:  # Added self here as it's a method
+            """Creates/stores a plan for a task."""
+            self.plan = plan  # Assuming self.plan is an attribute of your agent class
+            return "Plan successfully created and stored."
+
+        create_plan_tool = FunctionTool.from_defaults(
+            fn=self._create_plan_tool_func,  # Corrected to use the intended function and made it a method call
+            name="create_plan",  # Changed name to snake_case for consistency, but "create plan" works if preferred
+            description=(
+                "Stores a provided step-by-step plan for the agent's current task. "
+                "Requires a 'plan' argument as a string containing the full, pre-defined plan text. "
+                "Use this tool to explicitly set the agent's action sequence when the plan has "
+                "already been determined or provided (e.g., by a user or another process), "
+                "rather than requiring the agent to generate the plan itself. "
+                "The agent will then use this stored plan to guide its execution."
+            )
+        )
+        self.tools.append(create_plan_tool)
+
+        def _view_check_tool_func(self, doCheck= bool) -> str:  # Added self here as it's a method
+            """
+            Reviews the current execution plan. Optionally marks the current 'NEXT' step as 'DONE'
+            and advances to the subsequent step if 'mark_current_step_as_done' is True.
+            """
+            if not self.plan or not self.parsed_plan_steps:
+                # This check handles the case where _create_plan was not called or failed to parse
+                if not self.plan:
+                    return "No plan has been created yet. Use 'create_plan' to set a plan first."
+                else: # self.plan exists but self.parsed_plan_steps is empty
+                    return "A plan string exists, but it could not be parsed into actionable steps. Please check the plan format or recreate it."
+
+            num_steps = len(self.parsed_plan_steps)
+            response_parts = []
+
+            # Action: Mark step as done (if requested and applicable)
+            if doCheck:
+                if self.current_step_index < num_steps:
+                    # The step at current_step_index is the one being marked done
+                    completed_step_text = self.parsed_plan_steps[self.current_step_index]
+                    response_parts.append(f"Marking Step {self.current_step_index + 1} ('{completed_step_text}') as DONE.")
+                    self.last_completed_step_index = self.current_step_index
+                    self.current_step_index += 1 # Advance to the next step
+                elif self.current_step_index >= num_steps and self.last_completed_step_index == num_steps - 1:
+                    response_parts.append("All plan steps have already been completed. No further steps to mark done.")
+                else:
+                    response_parts.append("Cannot mark step as done: Already at the end of the plan, or no steps were pending to be marked.")
+            else:
+                if self.last_completed_step_index == -1 and self.current_step_index == 0:
+                    response_parts.append("Viewing initial plan. No steps marked done yet.")
+                elif self.last_completed_step_index >= 0:
+                    response_parts.append(f"Viewing plan. Last completed step was {self.last_completed_step_index + 1}. No new step marked as done in this call.")
+                else: # current_step_index might be > 0 but nothing completed if mark_done was always false
+                    response_parts.append("Viewing plan. No steps marked done yet.")
+
+
+            # Display: Show the full plan with current status
+            response_parts.append("\n--- Current Plan Status ---")
+            if not self.parsed_plan_steps: # Should be caught earlier, but for safety
+                 response_parts.append("  (No steps in plan to display)")
+            else:
+                for i, step_text in enumerate(self.parsed_plan_steps):
+                    if i <= self.last_completed_step_index:
+                         prefix = f"  [DONE] Step {i+1}:"
+                    elif i == self.current_step_index and i < num_steps: # The new current/next step
+                        prefix = f"  [NEXT] Step {i+1}:"
+                    elif i > self.current_step_index and i < num_steps: # Upcoming steps
+                        prefix = f"         Step {i+1}:"
+                    else: # Only if all steps are done and i >= num_steps (should not be hit if list ends)
+                        # This case might occur if parsed_plan_steps is empty after the check above.
+                        # Or if current_step_index went past num_steps unexpectedly.
+                        # For safety, we just list it.
+                        prefix = f"         Step {i+1}:"
+                    response_parts.append(f"{prefix} {step_text}")
+
+            # Conclusion: Indicate next step or plan completion
+            if self.current_step_index < num_steps:
+                next_step_text = self.parsed_plan_steps[self.current_step_index]
+                response_parts.append(f"\nNext action is Step {self.current_step_index + 1}: '{next_step_text}'")
+            elif self.last_completed_step_index == num_steps -1 and num_steps > 0 : # All steps are actually done
+                response_parts.append("\nPLAN COMPLETE: All steps have been processed.")
+            elif num_steps == 0:
+                response_parts.append("\nPlan is empty.")
+            else: # current_step_index might be num_steps but last_completed not yet num_steps-1
+                  # This means the "NEXT" pointer is past the end, implying completion.
+                response_parts.append("\nPLAN COMPLETE: All steps have been processed.")
+
+            return "\n".join(response_parts)
+
+        view_check_tool = FunctionTool.from_defaults(
+            fn=self._view_check_tool_func,  # Corrected to use the intended function and made it a method call
+            name="view_check_plan",  # Changed name to snake_case for consistency, but "create plan" works if preferred
+            description=(
+                "Reviews the currently active multi-step execution plan and manages progress. "
+                "Requires a boolean argument 'mark_current_step_as_done' (defaults to False). "
+                "If True, the current 'NEXT' step is marked 'DONE', and the plan advances. "
+                "If False (default), it only displays the plan with the current 'NEXT' step highlighted. "
+                "Use to check current status and upcoming actions, or to confirm completion of a step."
+            )
+        )
+        self.tools.append(view_check_tool)
+
+
 
     def _get_text_input_tool_func(self, prompt: str) -> str:
         additional_input = self.server.wait_for_input(prompt)
@@ -930,3 +1062,6 @@ class Agent:
             import traceback
             traceback.print_exc()
             return f"Error in {self.name}: {str(e)}"
+
+
+
