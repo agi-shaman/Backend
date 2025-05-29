@@ -7,3 +7,4 @@ pypdf
 dotenv
 pymupdf
 llama-index-readers-file
+reportlab
