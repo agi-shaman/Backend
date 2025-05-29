@@ -7,4 +7,8 @@ pypdf
 dotenv
 pymupdf
 llama-index-readers-file
+<<<<<<< HEAD
 reportlab
+=======
+llama-index-readers-web
+>>>>>>> c0a016dcc73628d3eeef928be1d177c0a1621518
