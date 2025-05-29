@@ -2,7 +2,6 @@ from llama_index.core.agent.workflow import FunctionAgent
 import shutil
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
-from llama_index.llms.gemini import Gemini
 from .rate_limited_gemini import RateLimitedGemini
 from dotenv import load_dotenv
 import os

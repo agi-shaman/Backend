@@ -2,15 +2,11 @@ llama-index
 llama-index-llms-gemini
 python-dotenv
 llama-index-embeddings-gemini
-google-generativeai
 pypdf
 dotenv
 pymupdf
 llama-index-readers-file
-reportlab
-llama-index-readers-web
 tenacity
-llama-index-readers-web
 googlesearch-python
 reportlab
 llama-index-readers-web
