@@ -3,16 +3,12 @@ import asyncio
 
 async def run_agent():
     """Asynchronous function to initialize and run the agent."""
-    main_agent = agent.Agent()  # Or however your Agent class is initialized
-    # Assuming main_agent.agent.run is an async method
-    response = await main_agent.agent.run(user_msg="test")
-    print(str(response))
+    main_agent = agent.Agent(system_prompt="You are a master orchestrator, you are created to test your ability to create sub agents",verbose=True)
+    print(await main_agent.run(user_msg="Create two subagents named 'AgentA' and 'AgentB' with the functions you are provided with. Then, using the 'call_specific_sub_agent' tool, call 'Main_Agent/AgentA' and 'Main_Agent/AgentB', ask them how they are feeling, and respond to their answers."))
 
 if __name__ == "__main__":
-    # asyncio.run() is the standard way to call an async function
-    # from synchronous code. It takes care of managing the event loop.
     try:
-        asyncio.run(run_agent())
+       asyncio.run(run_agent())
     except ImportError as e:
         print(f"ImportError: {e}")
         print("This script seems to be part of a package. "
