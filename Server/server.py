@@ -31,62 +31,7 @@ class AgentResponse(BaseModel):
 
 # --- Agent Import ---
 # Attempt to import the real Agent, provide a more functional dummy if it fails.
-try:
-    from ..lib.agent import Agent as ActualAgent
-
-    print("Successfully imported Agent from ..lib.agent")
-except ImportError:
-    print("Warning: Could not import Agent from ..lib.agent. Using dummy Agent.")
-
-
-    class ActualAgent:  # More functional Dummy Agent
-        def __init__(self, verbose: bool = False,
-                     tool_registry: Dict[str, Callable[..., Awaitable[Any]]] | None = None):
-            self.verbose = verbose
-            self.tool_registry = tool_registry if tool_registry else {}
-            if self.verbose:
-                print(f"[Dummy Agent] Initialized. Tools: {list(self.tool_registry.keys())}")
-
-        async def run(self, task_prompt: str) -> str:
-            if self.verbose:
-                print(f"[Dummy Agent] Received task: {task_prompt}")
-
-            response_parts = [f"Dummy agent processed: '{task_prompt}'."]
-
-            # Example: Using "ask_user_tool"
-            if "question for user" in task_prompt.lower() and "ask_user_tool" in self.tool_registry:
-                question_to_ask = "What is your favorite color for this task?"
-                if self.verbose:
-                    print(f"[Dummy Agent] Using 'ask_user_tool' to ask: {question_to_ask}")
-                try:
-                    user_response = await self.tool_registry["ask_user_tool"](question=question_to_ask)
-                    response_parts.append(f"User responded to question: '{user_response}'.")
-                except Exception as e:
-                    print(f"[Dummy Agent] Error calling 'ask_user_tool': {e}")
-                    response_parts.append(f"Tried to ask user but failed: {e}.")
-
-            # Example: Using "schedule_future_prompt"
-            if "follow up in 1 minute" in task_prompt.lower() and "schedule_future_prompt" in self.tool_registry:
-                follow_up_prompt = f"This is a scheduled follow-up for the task: '{task_prompt}'"
-                future_time = datetime.now(timezone.utc) + timedelta(minutes=1)
-                future_time_iso = future_time.isoformat()
-                if self.verbose:
-                    print(
-                        f"[Dummy Agent] Using 'schedule_future_prompt' for: '{follow_up_prompt}' at {future_time_iso}")
-                try:
-                    schedule_result = await self.tool_registry["schedule_future_prompt"](
-                        prompt=follow_up_prompt,
-                        scheduled_time_iso=future_time_iso
-                    )
-                    response_parts.append(
-                        f"Scheduled follow-up: {schedule_result.get('message', 'Status: ' + schedule_result.get('status', 'unknown'))}.")
-                except Exception as e:
-                    print(f"[Dummy Agent] Error calling 'schedule_future_prompt': {e}")
-                    response_parts.append(f"Tried to schedule follow-up but failed: {e}.")
-
-            await asyncio.sleep(0.5)  # Simulate some base work
-            return " ".join(response_parts)
-
+from ..lib.agent import Agent as ActualAgent
 AgentType = ActualAgent  # Use this type hint
 
 

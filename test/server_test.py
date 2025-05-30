@@ -9,10 +9,7 @@ SERVER_URL = "http://127.0.0.1:8001"
 SCHEDULER_INTERVAL_ON_SERVER = 30  # Match server.py's SCHEDULER_INTERVAL_SECONDS
 
 # Task prompts
-USER_TASK_PDF = "In ten minutes from now, count from 10 to 1"
-USER_TASK_SUMMARY = "Summarize the benefits of using FastAPI for web development."
-USER_TASK_SCHEDULED_1 = "This is a later task that asks you to count from 1 to ten"
-USER_TASK_SCHEDULED_2 = "please wait 3 seconds and then create a PDF that says hello world"
+USER_TASK_PDF = "What is the current time?"
 
 
 def print_server_response(test_name: str, response: requests.Response, start_time: float):
